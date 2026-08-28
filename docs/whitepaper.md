@@ -65,7 +65,7 @@ The remainder of this paper is the executable spec: what we keep from upstream, 
 - **Drop Node.** Single static binary (`mycli`), `go install` or `brew install`, no `npx`, no `node_modules`.
 - **Preserve the 3-step mental model.** User types `mycli get vercel-labs/agent-skills/vercel-optimize`; CLI resolves via skills.sh, populates cache if needed, links into agent dirs. The loop is the product.
 - **Own dot-folder cache with sparse incremental Git.** `~/.mycli` (config) + `~/.cache/mycli` (XDG) or `~/.mycli/cache` (fallback). `git clone --filter=blob:none --sparse --depth 1` on first hit, `git fetch --depth 1 && reset --hard FETCH_HEAD` thereafter, `sparse-checkout set` per skill. No `go-git`; only `exec git`.
-- **Safe/unsafe at a glance.** Every `search` row shows `SAFE / UNSAFE / UNKNOWN` sourced from skills.sh audit, with color and `--json` machine output.
+- **Safe/unsafe at a glance.** Every `search` row shows `SAFE / UNSAFE / UNKNOWN` sourced from skills.sh audit, with color and compact single-line text optimized for both humans and agents (no JSON bloat).
 - **Risky ⇒ password.** An agent running non-interactively cannot install a flagged skill without a human-provided password. Official status does not auto-bypass.
 - **Topic + official filters.** `search --topic react --official` maps to https://www.skills.sh/topic and https://www.skills.sh/official.
 
@@ -392,9 +392,11 @@ On `universal` agents (`.agents/skills`) global install stops at canonical dir (
 #### 8.2 Flags
 
 ```
-mycli search [query] [--topic <topic>] [--official] [--owner <owner>] [--json] [--limit 20]
+mycli search [query] [--topic <topic>] [--official] [--owner <owner>] [--limit 20]
 mycli find   [query] …   # alias
 ```
+
+No `--json`. Output is compact plain text (see §8.4) — readable in a terminal and parseable by agents via `cut`/`awk` without JSON overhead. Web parity: `--topic` mirrors https://www.skills.sh/topic and `--official` mirrors https://www.skills.sh/official so `mycli search --topic react`, `mycli search --official`, or `mycli search nextjs --topic nextjs --official` behave like the website filters.
 
 Topics (from https://www.skills.sh/topic):
 
@@ -429,15 +431,23 @@ vercel-labs/agent-skills      nextjs         ✓         SAFE     671k      Next
 some/risky-skill              unknown                  UNSAFE   1.2k      curl|bash postinstall
 ```
 
-Colors: `SAFE` green, `UNSAFE` red bold, `UNKNOWN` yellow; `OFFICIAL ✓` green; disabled if `!isTTY || --json || NO_COLOR`. Width = `process.stdout.columns` aware, truncate description to 60.
+Colors: `SAFE` green, `UNSAFE` red bold, `UNKNOWN` yellow; `OFFICIAL ✓` green; disabled if `!isTTY || NO_COLOR`. Width = `process.stdout.columns` aware, truncate description to 60.
 
-`--json` output includes `safe, reason, unknown, official, topic`:
+**Compact text format (no JSON):** One line per skill, tab-separated for machine parsing but still human-readable. Agents parse with `cut -f`/`awk` without JSON bloat.
 
-```json
-[{"slug":"vercel-react-best-practices","source":"vercel-labs/agent-skills","safe":true,"official":true,"topic":"react","installs":671573}]
+```
+# mycli search react --topic react --official
+vercel-labs/agent-skills:vercel-react-best-practices  react  official  SAFE    671k  React performance best practices
+vercel-labs/agent-skills:vercel-react-native-skills   mobile official  SAFE    197k  React Native + Expo patterns
+some/risky-skill:risky-skill                           unknown          UNSAFE  1.2k  curl|bash postinstall (reason)
+
+# columns: slug  topic  official|""  SAFE|UNSAFE|UNKNOWN  installs  description
+# header is omitted by default for piping; add --header to include it
 ```
 
-Survey fallback: if `query==""` and TTY and not `--json`, `survey.Input{Message:"Search skills:"}` then debounced live search (150 ms) like upstream; after select, call `add` with same gating.
+Why no `--json`: JSON repeats keys per row (`"slug":` 7 bytes × N) and escapes, wasting tokens for LLMs and bytes for piping. The TSV line is ~40% smaller and still losslessly conveys `safe/official/topic/installs`. If structured output is needed, agents can use `--header` + `awk -F'\t'`.
+
+Survey fallback: if `query==""` and TTY, `survey.Input{Message:"Search skills:"}` then debounced live search (150 ms) like upstream; after select, call `add` with same gating.
 
 Non-TTY with no query → error: "query required in non-interactive mode".
 
@@ -543,9 +553,11 @@ Commands:
   get, add      Resolve → Cache → Link a skill (alias: a)
                 mycli get vercel-labs/agent-skills/vercel-optimize
                 mycli get owner/repo --skill s1 --skill s2 --agent claude-code --global --copy
-  search, find  Search with safe/unsafe signal
-                mycli search react --topic nextjs --official --owner vercel --json
-  list, ls      List installed skills [--global --agent --json]
+  search, find  Search with safe/unsafe signal (topic/official like web)
+                mycli search react --topic react
+                mycli search --topic nextjs --official
+                mycli search nextjs --topic nextjs --official --owner vercel
+  list, ls      List installed skills [--global --agent]
   remove, rm    Remove installed skills
   update        Update to latest (re-fetch + re-link) [--global --project -y]
   cache         Cache subcommands: gc, path, clean
@@ -556,7 +568,6 @@ Flags (global):
   --config <path>     config file (default ~/.mycli/config.yaml)
   --cache-dir <path>  cache dir (default ~/.cache/mycli)
   -y, --yes           skip confirm (still fails closed for risky without trust)
-  --json              machine output (search/list)
   --no-color          disable color
   -h, --help          help
   -v, --version       version
@@ -564,7 +575,7 @@ Flags (global):
 
 **`get/add` flags:** `-g/--global`, `-p/--project`, `-a/--agent <list|*>`, `-s/--skill <list|*>`, `-l/--list` (list skills without installing), `--ref <branch|tag|sha>`, `--copy`, `--link-mode symlink|copy|auto`, `--force` (refresh cache), `--full-depth`, `--subagent`.
 
-**`search` flags:** `[query]`, `--topic`, `--official`, `--owner`, `--limit`, `--json`.
+**`search` flags:** `[query]`, `--topic` (react|nextjs|design|mobile|agent-workflows|databases|testing|marketing|all), `--official` (only https://www.skills.sh/official), `--owner`, `--limit`, `--header` (print TSV header). No `--json` — output is compact text by design.
 
 Keep upstream aliases (`a`, `ls`, `rm`) for muscle memory.
 
@@ -638,7 +649,7 @@ Observability: `mycli --verbose` (`viper.GetBool("verbose")`) logs resty request
 ### 14. Migration & Compatibility
 
 - **From `npx skills`:** `mycli` accepts same shorthand (`owner/repo`, `owner/repo@skill`, `github:`, `well-known`, `local`) and same flags (`-g, -a, -s, -y, --copy`). Help text mirrors upstream for familiarity. No `node_modules` scan — `experimental_sync` is dropped (out of loop); use `mycli get` explicitly.
-- **To `mycli`:** Users alias `alias skills=mycli` or `mycli get` directly. AI agents update tool definitions to `mycli get --json` vs `npx skills add`.
+- **To `mycli`:** Users alias `alias skills=mycli` or `mycli get` directly. AI agents use `mycli search <q> --topic <t> --official` like the web and pipe compact TSV (`cut -f1`) vs `npx skills add`.
 - **Lockfiles:** Keep reading/writing `skills-lock.json` v1 and `.skill-lock.json` v3 for interop; both tools can coexist.
 - **Tokens:** Reuse `GITHUB_TOKEN` / `gh` credential — no new auth.
 - **Install:** `go install skill.sh/mycli@latest`, `brew install mycli`, or `curl -fsSL https://skills.sh/install.sh | sh` (future).
@@ -651,7 +662,7 @@ The three-phase loop is intentionally small. Improvements outside it but within 
 
 1. **Performance:** Go binary <50 ms startup vs ~400 ms Node; sparse cache avoids re-clones (repo 100 MB → skill 50 KB, 2000× savings); `fetch --depth 1` vs full clone.
 2. **Disk:** GC (`max_age`/`max_size` LRU) + tmp staging cleanup; upstream tmpdirs linger on crash.
-3. **UX:** `--json` for all commands (upstream only `list --json`); pagination (`--limit/--page`); `cache gc --dry-run`; `trust status`.
+3. **UX:** Compact text over JSON (agents save tokens/bytes, `cut`/`awk` parseable); pagination (`--limit/--page`); `cache gc --dry-run`; `trust status`; `--header` for TSV.
 4. **Security:** Fail-closed audit, password gate, human-only trust, `UNKNOWN` treated as unsafe. Upstream advisory table never blocks.
 5. **Discoverability:** `--topic` / `--official` make https://www.skills.sh/topic and https://www.skills.sh/official first-class; upstream `owner` filter only.
 6. **Windows:** `symlink` fallback + `auto` mode detection.
@@ -683,7 +694,7 @@ The three-phase loop is intentionally small. Improvements outside it but within 
 
 **Phase 3 — Search + Security (week 3)**
 
-- `search.Render` table + `SAFE/UNSAFE/UNKNOWN` + `--topic/--official/--json`
+- `search.Render` table/TSV + `SAFE/UNSAFE/UNKNOWN` + `--topic/--official` (web parity, no JSON)
 - `security.RequirePassword`, `security.IsTrustEnabled`, `trust enable/disable/status/reset`
 - 0600/0700 enforcement, `bcrypt` cost 12, 3-retries, TTY + agentEnv gates
 
