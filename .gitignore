@@ -1,0 +1,15 @@
+# binaries
+/mycli
+/mycli-*
+
+# cache & dot folder (never commit)
+.cache/
+
+# OS
+.DS_Store
+
+# Go
+vendor/
+
+# Node (if any local inspect)
+node_modules/
