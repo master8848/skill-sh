@@ -1,0 +1,25 @@
+version: 2
+project_name: mskill
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - binary: mskill
+    main: .
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X skill.sh/mskill/cmd.version={{.Version}}
+archives:
+  - builds: [mskill]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: checksums.txt
+brews:
+  - repository:
+      owner: skill-sh
+      name: homebrew-tap
+    folder: Formula
+    homepage: https://skills.sh
+    description: "Fetch → Store → Link skill manager"
+    binary: mskill

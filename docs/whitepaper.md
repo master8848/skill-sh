@@ -1,11 +1,11 @@
-# mycli — A Go-Native Replacement for `npx skills`
+# mskill — A Go-Native Replacement for `npx skills`
 
 ## A Fetch → Store → Link Skill Manager with Sparse Git Cache, Fail-Closed Security, and Human-Gated Trust
 
 **Version:** 0.1.0-draft  
 **Date:** 2026-08-28  
 **Status:** Design Whitepaper (pre-implementation)  
-**Authors:** mycli team  
+**Authors:** mskill team  
 **Stack:** Go · Cobra · Viper · Resty · Survey · `golang.org/x/crypto/bcrypt`  
 **Upstream:** `skills@1.5.23` (`npx skills`), https://skills.sh, https://www.skills.sh/topic, https://www.skills.sh/official
 
@@ -21,7 +21,7 @@ It works, but it has three structural deficits this whitepaper addresses:
 2. **No persistent cache.** Each `add` does `mkdtemp("skills-") → git clone --depth 1 → copy → rm -rf tmp`. No incremental fetch, no sparse checkout, no TTL/GC. Multi-skill repos re-clone the whole repo.
 3. **Advisory-only security.** Audit (`https://add-skill.vercel.sh/audit?source=X&skills=Y`, 3s timeout) renders a table but never blocks. There is no topic/official-aware search, no `safe/unsafe` column, and no mechanism to prevent an agent (non-interactive) from installing a risky skill.
 
-**mycli** re-implements the same user contract — **`mycli get user/repo/skill`** — as a pure Go binary that does exactly three things in a loop:
+**mskill** re-implements the same user contract — **`mskill get user/repo/skill`** — as a pure Go binary that does exactly three things in a loop:
 
 > **1. Resolve → 2. Cache → 3. Install/Link**
 >
@@ -62,9 +62,9 @@ The remainder of this paper is the executable spec: what we keep from upstream, 
 
 **Goals**
 
-- **Drop Node.** Single static binary (`mycli`), `go install` or `brew install`, no `npx`, no `node_modules`.
-- **Preserve the 3-step mental model.** User types `mycli get vercel-labs/agent-skills/vercel-optimize`; CLI resolves via skills.sh, populates cache if needed, links into agent dirs. The loop is the product.
-- **Own dot-folder cache with sparse incremental Git.** `~/.mycli` (config) + `~/.cache/mycli` (XDG) or `~/.mycli/cache` (fallback). `git clone --filter=blob:none --sparse --depth 1` on first hit, `git fetch --depth 1 && reset --hard FETCH_HEAD` thereafter, `sparse-checkout set` per skill. No `go-git`; only `exec git`.
+- **Drop Node.** Single static binary (`mskill`), `go install` or `brew install`, no `npx`, no `node_modules`.
+- **Preserve the 3-step mental model.** User types `mskill get vercel-labs/agent-skills/vercel-optimize`; CLI resolves via skills.sh, populates cache if needed, links into agent dirs. The loop is the product.
+- **Own dot-folder cache with sparse incremental Git.** `~/.mskill` (config) + `~/.cache/mskill` (XDG) or `~/.mskill/cache` (fallback). `git clone --filter=blob:none --sparse --depth 1` on first hit, `git fetch --depth 1 && reset --hard FETCH_HEAD` thereafter, `sparse-checkout set` per skill. No `go-git`; only `exec git`.
 - **Safe/unsafe at a glance.** Every `search` row shows `SAFE / UNSAFE / UNKNOWN` sourced from skills.sh audit, with color and compact single-line text optimized for both humans and agents (no JSON bloat).
 - **Risky ⇒ password.** An agent running non-interactively cannot install a flagged skill without a human-provided password. Official status does not auto-bypass.
 - **Topic + official filters.** `search --topic react --official` maps to https://www.skills.sh/topic and https://www.skills.sh/official.
@@ -165,7 +165,7 @@ Telemetry: `https://add-skill.vercel.sh/t`, fire-and-forget, suppressed for priv
 ### 3. Architecture: The Three-Phase Loop
 
 ```
-User: mycli get user/repo/skill [--global] [--agent claude --copy] [--ref main]
+User: mskill get user/repo/skill [--global] [--agent claude --copy] [--ref main]
 
 ┌──────────┐    ┌─────────┐    ┌──────────────┐
 │  Resolve │───▶│  Cache  │───▶│ Install/Link │
@@ -197,7 +197,7 @@ Each invocation runs the loop once per requested skill. `Resolve` is network (Re
 | Need | Choice | Why |
 |---|---|---|
 | CLI framework | `spf13/cobra` | Subcommands, flag groups, `PersistentPreRun`, shell completion, man generation. De-facto standard; maps 1:1 to upstream commands (`add`, `get`, `search`, `list`, `remove`, `cache`, `trust`). |
-| Config | `spf13/viper` | Dot-folder + XDG + env (`MYCLI_*`) + flag precedence. `viper.GetDuration("cache.ttl")`, `SetDefault`, `WriteConfigAs(...0600)` exactly matches spec's "own dot folder" requirement. |
+| Config | `spf13/viper` | Dot-folder + XDG + env (`MSKILL_*`) + flag precedence. `viper.GetDuration("cache.ttl")`, `SetDefault`, `WriteConfigAs(...0600)` exactly matches spec's "own dot folder" requirement. |
 | HTTP | `go-resty/resty/v2` | `SetTimeout`, `SetRetryCount`, interceptors, `SetBaseURL("https://skills.sh")`, `R().SetQueryParams` for search/download/audit. Cleaner than `net/http` raw for 3 endpoints. |
 | Prompts | `AlecAivazis/survey/v2` | `survey.Select` / `survey.Password` / `survey.Confirm` / `survey.MultiSelect` for interactive search, risky-skill password, trust enable, agent picking. Respects TTY detection. |
 | Hashing | `golang.org/x/crypto/bcrypt` | Password hashing for risky-skill gate; cost 12. No plaintext storage. |
@@ -222,7 +222,7 @@ Binary: `CGO_ENABLED=0 go build -ldflags="-s -w"` → ~8–12 MiB static binary,
 
 **Output:** `Resolved{ CloneURL, Ref, Subpath, SkillFilter, Source, Slug, IsOfficial, AuditVerdict }`.
 
-**Error handling:** 404 → "skill not found, try `mycli search <query>`"; private 401/404 → require token hint; timeout → audit `UNKNOWN` (fail-closed).
+**Error handling:** 404 → "skill not found, try `mskill search <query>`"; private 401/404 → require token hint; timeout → audit `UNKNOWN` (fail-closed).
 
 ---
 
@@ -234,18 +234,18 @@ Replaces `mkdtemp + --depth 1 + rm -rf` with persistent, incremental, sparse sto
 
 ```go
 paths := config.ResolvePaths() // internal/config
-// CacheDir = $XDG_CACHE_HOME/mycli else ~/.cache/mycli
-// DotDir   = ~/.mycli (0700)
-// ConfigFile = ~/.mycli/config.yaml (0600)
-// TrustFile  = ~/.mycli/trust.json  (0600) — alternative to config.yaml field
+// CacheDir = $XDG_CACHE_HOME/mskill else ~/.cache/mskill
+// DotDir   = ~/.mskill (0700)
+// ConfigFile = ~/.mskill/config.yaml (0600)
+// TrustFile  = ~/.mskill/trust.json  (0600) — alternative to config.yaml field
 ```
 
-Env overrides: `MYCLI_CACHE_DIR`, `MYCLI_DOT_DIR`, `MYCLI_CONFIG`, `GH_HOST`, `SKILLS_API_URL`, `SKILLS_DOWNLOAD_URL`.
+Env overrides: `MSKILL_CACHE_DIR`, `MSKILL_DOT_DIR`, `MSKILL_CONFIG`, `GH_HOST`, `SKILLS_API_URL`, `SKILLS_DOWNLOAD_URL`.
 
 #### 6.2 Directory layout
 
 ```
-~/.cache/mycli/
+~/.cache/mskill/
 ├── repos/
 │   └── github.com/
 │       └── <owner>/
@@ -253,19 +253,19 @@ Env overrides: `MYCLI_CACHE_DIR`, `MYCLI_DOT_DIR`, `MYCLI_CONFIG`, `GH_HOST`, `S
 │               └── <refSlug>--<hash8>/   # e.g. main--a1b2c3d4
 │                   ├── .git/             # blobless, shallow, sparse
 │                   ├── <skill-path>/...  # only this skill's files
-│                   ├── .mycli-meta.json
+│                   ├── .mskill-meta.json
 │                   └── .lock
 └── tmp/
     └── clone-XXXX/                        # staging, then atomic rename
 
-~/.mycli/
+~/.mskill/
 ├── config.yaml                           # viper, 0600
 └── trust.json                            # optional split file, 0600
 ```
 
 Cache key: `sha256(host+owner+repo)[:8] + sanitized ref` (slash→dash). One `.git` per `repo@ref`, shared across skills from same repo.
 
-`.mycli-meta.json`:
+`.mskill-meta.json`:
 
 ```json
 {
@@ -344,7 +344,7 @@ All `exec` wrapped as `runGit(ctx, dir, args...)` → `exec.CommandContext` with
 
 - Per-cache-entry `flock` (`github.com/gofrs/flock` or `syscall.Flock`) on `$CACHE/.../.lock` with 30s timeout.
 - Clone to `tmp` then `os.Rename` (atomic).
-- GC: `mycli cache gc [--dry-run]` scans `repos/*/*/*`, reads `meta.lastAccess`, `du`, deletes if `now - lastAccess > max_age` (default 30d) or total > `max_size` (2 GiB, LRU by `lastAccess`). Only deletes when `.lock` try-locks.
+- GC: `mskill cache gc [--dry-run]` scans `repos/*/*/*`, reads `meta.lastAccess`, `du`, deletes if `now - lastAccess > max_age` (default 30d) or total > `max_size` (2 GiB, LRU by `lastAccess`). Only deletes when `.lock` try-locks.
 
 **Viper keys:**
 
@@ -379,16 +379,16 @@ createSymlink(cacheAbs, destAbs) // relative
 
 On `universal` agents (`.agents/skills`) global install stops at canonical dir (no extra symlink) — same as upstream `isUniversalAgent`.
 
-**Cache-view (no install):** Because `Phase 2` leaves a sparse checkout in `~/.cache/mycli/repos/...`, `Phase 3` is optional. `mycli get --show` and `mycli show/cat` reuse **Resolve → Cache** only, then `cat` from cache without linking:
+**Cache-view (no install):** Because `Phase 2` leaves a sparse checkout in `~/.cache/mskill/repos/...`, `Phase 3` is optional. `mskill get --show` and `mskill show/cat` reuse **Resolve → Cache** only, then `cat` from cache without linking:
 
 ```
-mycli get vercel-labs/agent-skills/vercel-optimize --show
+mskill get vercel-labs/agent-skills/vercel-optimize --show
 # → Resolve + Audit (fail-closed) + Cache (sparse fetch if needed) → print $CACHE/.../vercel-optimize/SKILL.md to stdout
 
-mycli show vercel-labs/agent-skills/vercel-optimize --file README.md --file scripts/setup.sh
+mskill show vercel-labs/agent-skills/vercel-optimize --file README.md --file scripts/setup.sh
 # → same, but prints additional files. Paths are sanitized against ".." and must be inside the skill.
 
-mycli show vercel-labs/agent-skills/vercel-optimize --list
+mskill show vercel-labs/agent-skills/vercel-optimize --list
 # → lists files in cached skill (like `ls` of cache view) without installing.
 ```
 
@@ -407,15 +407,15 @@ All view paths run the same security gate as `get` (audit → password if `UNSAF
 #### 8.2 Flags
 
 ```
-mycli search [query] [--topic <topic>] [--official] [--owner <owner>] [--limit 20]
-mycli find   [query] …   # alias
+mskill search [query] [--topic <topic>] [--official] [--owner <owner>] [--limit 20]
+mskill find   [query] …   # alias
 ```
 
-No `--json`. Output is compact plain text (see §8.4) — readable in a terminal and parseable by agents via `cut`/`awk` without JSON overhead. Web parity: `--topic` mirrors https://www.skills.sh/topic and `--official` mirrors https://www.skills.sh/official so `mycli search --topic react`, `mycli search --official`, or `mycli search nextjs --topic nextjs --official` behave like the website filters.
+No `--json`. Output is compact plain text (see §8.4) — readable in a terminal and parseable by agents via `cut`/`awk` without JSON overhead. Web parity: `--topic` mirrors https://www.skills.sh/topic and `--official` mirrors https://www.skills.sh/official so `mskill search --topic react`, `mskill search --official`, or `mskill search nextjs --topic nextjs --official` behave like the website filters.
 
 Topics (from https://www.skills.sh/topic):
 
-`react, nextjs, design, mobile, agent-workflows, databases, testing, marketing` plus `all`. Hardcode + `go generate` from `/topic` scrape, 24h cache in `~/.mycli/cache/topics.json`.
+`react, nextjs, design, mobile, agent-workflows, databases, testing, marketing` plus `all`. Hardcode + `go generate` from `/topic` scrape, 24h cache in `~/.mskill/cache/topics.json`.
 
 Official: `GET https://www.skills.sh/official` → curated owner/repo allowlist (scrape or hardcode `internal/official/list.go`, 24h cache `official.json`). Filter: `skill.Official == true` or `owner/repo ∈ allowlist`.
 
@@ -451,7 +451,7 @@ Colors: `SAFE` green, `UNSAFE` red bold, `UNKNOWN` yellow; `OFFICIAL ✓` green;
 **Compact text format (no JSON):** One line per skill, tab-separated for machine parsing but still human-readable. Agents parse with `cut -f`/`awk` without JSON bloat.
 
 ```
-# mycli search react --topic react --official
+# mskill search react --topic react --official
 vercel-labs/agent-skills:vercel-react-best-practices  react  official  SAFE    671k  React performance best practices
 vercel-labs/agent-skills:vercel-react-native-skills   mobile official  SAFE    197k  React Native + Expo patterns
 some/risky-skill:risky-skill                           unknown          UNSAFE  1.2k  curl|bash postinstall (reason)
@@ -472,7 +472,7 @@ Non-TTY with no query → error: "query required in non-interactive mode".
 
 #### 9.1 Threat model
 
-- **Agent adversary:** An AI agent (Claude Code, Codex, Cursor, OpenCode) running as the same Unix UID, non-interactive (no TTY, `CI=1`, `GITHUB_ACTIONS`, etc.), tries to `mycli get risky/skill -y` or flip trust to bypass.
+- **Agent adversary:** An AI agent (Claude Code, Codex, Cursor, OpenCode) running as the same Unix UID, non-interactive (no TTY, `CI=1`, `GITHUB_ACTIONS`, etc.), tries to `mskill get risky/skill -y` or flip trust to bypass.
 - **Assumption:** Same-UID file access cannot be blocked by `chmod` alone. Absolute isolation requires OS user separation or keychain — out of scope. We provide **best-effort hardening**: degrade to "requires human password proof" and make file-edit bypass detectable and non-trivial.
 
 #### 9.2 When password is required
@@ -505,7 +505,7 @@ func isAgentEnv() bool {
     // CI, GITHUB_ACTIONS, GITLAB_CI, AGENT, CLAUDECODE, CURSOR_AGENT, OPENCODE, VSCODE_AGENT
 }
 if !isInteractiveTTY() || isAgentEnv() || viper.GetBool("non-interactive") || viper.GetBool("yes") {
-    return fmt.Errorf("UNSAFE skill %q requires human password. Re-run in TTY as human or `mycli trust enable` (TTY required).", slug)
+    return fmt.Errorf("UNSAFE skill %q requires human password. Re-run in TTY as human or `mskill trust enable` (TTY required).", slug)
 }
 ```
 
@@ -513,7 +513,7 @@ Exit 1, no survey. Message guides to `trust enable`.
 
 **Interactive:**
 
-1. If `security.passwordHash == ""` → `survey.Password{Message:"Create install password (for risky skills):"}` + confirm, `bcrypt.GenerateFromPassword(pw, 12)`, save to `~/.mycli/config.yaml` (0600, dir 0700) via `viper.WriteConfigAs` + `os.Chmod`.
+1. If `security.passwordHash == ""` → `survey.Password{Message:"Create install password (for risky skills):"}` + confirm, `bcrypt.GenerateFromPassword(pw, 12)`, save to `~/.mskill/config.yaml` (0600, dir 0700) via `viper.WriteConfigAs` + `os.Chmod`.
 2. Else → `survey.Password{Message:"Enter password to install UNSAFE skill 'X' (reason: Y):"}` → `bcrypt.CompareHashAndPassword`. 3 retries then abort.
 
 Storage:
@@ -528,13 +528,13 @@ security:
 
 `bcrypt` only, never plaintext. TTY-gated writes only.
 
-#### 9.4 Global trust: `mycli trust`
+#### 9.4 Global trust: `mskill trust`
 
 ```
-mycli trust enable   # human once, TTY required, password proof
-mycli trust disable  # requires password
-mycli trust status   # prints Trust: enabled/disabled, Password: set/not set (never hash)
-mycli trust reset    # delete hash+trust, requires TTY + type RESET
+mskill trust enable   # human once, TTY required, password proof
+mskill trust disable  # requires password
+mskill trust status   # prints Trust: enabled/disabled, Password: set/not set (never hash)
+mskill trust reset    # delete hash+trust, requires TTY + type RESET
 ```
 
 **`enable`:**
@@ -546,7 +546,7 @@ mycli trust reset    # delete hash+trust, requires TTY + type RESET
 
 **Hardening beyond chmod (why chmod insufficient):**
 
-Agent has same UID → can `read`/`write` `~/.mycli/config.yaml` regardless of 0600/0700. So:
+Agent has same UID → can `read`/`write` `~/.mskill/config.yaml` regardless of 0600/0700. So:
 
 1. **No env bypass:** `viper.BindEnv` must NOT bind `trustEnabled`/`passwordHash`. Only file.
 2. **TTY-gated mutations:** Any `trustEnabled` write in code checks `isInteractiveTTY()`. Agent without TTY cannot call `trust enable` even as subprocess.
@@ -562,22 +562,22 @@ Agent has same UID → can `read`/`write` `~/.mycli/config.yaml` regardless of 0
 ### 10. CLI Surface
 
 ```
-mycli [command] [args] [flags]
+mskill [command] [args] [flags]
 
 Commands:
   get, add      Resolve → Cache → Link a skill (alias: a)
-                mycli get vercel-labs/agent-skills/vercel-optimize
-                mycli get owner/repo --skill s1 --skill s2 --agent claude-code --global --copy
-                mycli get owner/repo/skill --show          # fetch+cache, print SKILL.md to stdout, no link
-                mycli get owner/repo --skill s1 --show --file SKILL.md
+                mskill get vercel-labs/agent-skills/vercel-optimize
+                mskill get owner/repo --skill s1 --skill s2 --agent claude-code --global --copy
+                mskill get owner/repo/skill --show          # fetch+cache, print SKILL.md to stdout, no link
+                mskill get owner/repo --skill s1 --show --file SKILL.md
   show, cat     View cached skill files without installing
-                mycli show owner/repo/skill                # prints SKILL.md after audit approval
-                mycli show owner/repo/skill --file README.md --file hooks/setup.sh
-                mycli show owner/repo/skill --list         # list files in cached skill
+                mskill show owner/repo/skill                # prints SKILL.md after audit approval
+                mskill show owner/repo/skill --file README.md --file hooks/setup.sh
+                mskill show owner/repo/skill --list         # list files in cached skill
   search, find  Search with safe/unsafe signal (topic/official like web)
-                mycli search react --topic react
-                mycli search --topic nextjs --official
-                mycli search nextjs --topic nextjs --official --owner vercel
+                mskill search react --topic react
+                mskill search --topic nextjs --official
+                mskill search nextjs --topic nextjs --official --owner vercel
   list, ls      List installed skills [--global --agent]
   remove, rm    Remove installed skills
   update        Update to latest (re-fetch + re-link) [--global --project -y]
@@ -586,8 +586,8 @@ Commands:
   version       Print version
 
 Flags (global):
-  --config <path>     config file (default ~/.mycli/config.yaml)
-  --cache-dir <path>  cache dir (default ~/.cache/mycli)
+  --config <path>     config file (default ~/.mskill/config.yaml)
+  --cache-dir <path>  cache dir (default ~/.cache/mskill)
   -y, --yes           skip confirm (still fails closed for risky without trust)
   --no-color          disable color
   -h, --help          help
@@ -606,14 +606,14 @@ Keep upstream aliases (`a`, `ls`, `rm`) for muscle memory.
 
 ### 11. Config & Filesystem Layout
 
-**Precedence:** `flag > env (MYCLI_*) > config.yaml > default`.
+**Precedence:** `flag > env (MSKILL_*) > config.yaml > default`.
 
 **Files:**
 
 ```
-~/.mycli/config.yaml          # 0600, viper, primary
-~/.cache/mycli/repos/...      # 0755, sparse clones
-~/.cache/mycli/tmp/           # staging
+~/.mskill/config.yaml          # 0600, viper, primary
+~/.cache/mskill/repos/...      # 0755, sparse clones
+~/.cache/mskill/tmp/           # staging
 ~/.agents/skills/<skill>      # global canonical (universal)
 ~/.claude/skills/<skill>      # per-agent global
 ./.agents/skills/<skill>      # project
@@ -654,7 +654,7 @@ All tunneled via `resty` with `SetTimeout`, `SetRetryCount(2)`, `SetRetryWaitTim
 
 | Failure | Detection | Response |
 |---|---|---|
-| Skill not found | 404 from search/download | "not found, try `mycli search <query> --topic`" |
+| Skill not found | 404 from search/download | "not found, try `mskill search <query> --topic`" |
 | Private repo 401/404 | GitHub API / git clone 128 | "private repo, set GITHUB_TOKEN or `gh auth login`" |
 | Audit timeout | 3s context | `UNKNOWN` → fail-closed for install, yellow for search |
 | Git shallow/filter unsupported | stderr `unknown option` | Retry without filter, warn |
@@ -665,17 +665,17 @@ All tunneled via `resty` with `SetTimeout`, `SetRetryCount(2)`, `SetRetryWaitTim
 | Cache corrupt | `git status` fails | `rm -rf` + re-clone under lock |
 | Network fetch fails (stale) | `fetch` 128 | Serve stale if exists |
 
-Observability: `mycli --verbose` (`viper.GetBool("verbose")`) logs resty requests (redacted token), git commands (stderr), audit latency. `mycli cache path` prints resolved dirs for debugging.
+Observability: `mskill --verbose` (`viper.GetBool("verbose")`) logs resty requests (redacted token), git commands (stderr), audit latency. `mskill cache path` prints resolved dirs for debugging.
 
 ---
 
 ### 14. Migration & Compatibility
 
-- **From `npx skills`:** `mycli` accepts same shorthand (`owner/repo`, `owner/repo@skill`, `github:`, `well-known`, `local`) and same flags (`-g, -a, -s, -y, --copy`). Help text mirrors upstream for familiarity. No `node_modules` scan — `experimental_sync` is dropped (out of loop); use `mycli get` explicitly.
-- **To `mycli`:** Users alias `alias skills=mycli` or `mycli get` directly. AI agents use `mycli search <q> --topic <t> --official` like the web and pipe compact TSV (`cut -f1`) vs `npx skills add`.
+- **From `npx skills`:** `mskill` accepts same shorthand (`owner/repo`, `owner/repo@skill`, `github:`, `well-known`, `local`) and same flags (`-g, -a, -s, -y, --copy`). Help text mirrors upstream for familiarity. No `node_modules` scan — `experimental_sync` is dropped (out of loop); use `mskill get` explicitly.
+- **To `mskill`:** Users alias `alias skills=mskill` or `mskill get` directly. AI agents use `mskill search <q> --topic <t> --official` like the web and pipe compact TSV (`cut -f1`) vs `npx skills add`.
 - **Lockfiles:** Keep reading/writing `skills-lock.json` v1 and `.skill-lock.json` v3 for interop; both tools can coexist.
 - **Tokens:** Reuse `GITHUB_TOKEN` / `gh` credential — no new auth.
-- **Install:** `go install skill.sh/mycli@latest`, `brew install mycli`, or `curl -fsSL https://skills.sh/install.sh | sh` (future).
+- **Install:** `go install skill.sh/mskill@latest`, `brew install mskill`, or `curl -fsSL https://skills.sh/install.sh | sh` (future).
 
 ---
 
@@ -689,7 +689,7 @@ The three-phase loop is intentionally small. Improvements outside it but within 
 4. **Security:** Fail-closed audit, password gate, human-only trust, `UNKNOWN` treated as unsafe. Upstream advisory table never blocks.
 5. **Discoverability:** `--topic` / `--official` make https://www.skills.sh/topic and https://www.skills.sh/official first-class; upstream `owner` filter only.
 6. **Windows:** `symlink` fallback + `auto` mode detection.
-7. **Future (out of v1):** Keychain-backed trust, `SKILLS_API_URL` mock server for offline tests, `mycli doctor` (git version, token, cache health), `mycli audit <skill>` standalone.
+7. **Future (out of v1):** Keychain-backed trust, `SKILLS_API_URL` mock server for offline tests, `mskill doctor` (git version, token, cache health), `mskill audit <skill>` standalone.
 
 **Explicitly out of scope:** Dependency solving, semver ranges, plugin marketplace, `node_modules` sync, well-known schema migration.
 
@@ -699,7 +699,7 @@ The three-phase loop is intentionally small. Improvements outside it but within 
 
 **Phase 0 — Scaffolding (week 1)**
 
-- `go mod init skill.sh/mycli`, `go get cobra viper resty survey`, `golang.org/x/crypto`
+- `go mod init skill.sh/mskill`, `go get cobra viper resty survey`, `golang.org/x/crypto`
 - `cmd/root.go` (viper init, paths, `PersistentPreRun`), `cmd/get.go`, `cmd/search.go`, `cmd/trust.go`, `cmd/cache.go`
 - `internal/config`, `internal/api`, `internal/cache`, `internal/git`, `internal/link`, `internal/security`, `internal/ui`
 - `runGit` helper, `isInteractiveTTY`, `isAgentEnv`
@@ -733,7 +733,7 @@ The three-phase loop is intentionally small. Improvements outside it but within 
 
 1. **Server-side topic/official API:** Should `GET /api/search` natively support `?topic=&official=` instead of client-side filtering? Proposal to upstream: add query params to avoid over-fetch.
 2. **Audit scoring:** Current `socket/snyk/zeroleaks` aggregation has no documented threshold. Define `SAFE` as `all == safe/low && score ≥ 80`? Need upstream spec or empirical calibration.
-3. **Keychain vs file:** Is `~/.mycli/config.yaml` 0600 sufficient for trust, or should v1 ship with keychain (`github.com/zalando/go-keyring`) from day one?
+3. **Keychain vs file:** Is `~/.mskill/config.yaml` 0600 sufficient for trust, or should v1 ship with keychain (`github.com/zalando/go-keyring`) from day one?
 4. **Sparse cone vs non-cone:** Skills nested under `skills/category/name` require `--no-cone` which is slower. Benchmark cone depth vs correctness.
 5. **Git version floor:** Sparse + `filter=blob:none` requires Git ≥2.25 / 2.19. What is the minimum supported version and fallback UX?
 
@@ -765,7 +765,7 @@ The three-phase loop is intentionally small. Improvements outside it but within 
 tmp=$(mktemp -d $CACHE/tmp/clone-XXXX)
 git clone --filter=blob:none --sparse --depth 1 --single-branch --branch <ref> <url> $tmp
 git -C $tmp sparse-checkout set --cone <skill-path>
-git -C $tmp rev-parse HEAD > .mycli-meta.json:commitSha
+git -C $tmp rev-parse HEAD > .mskill-meta.json:commitSha
 mv $tmp $CACHE/repos/github.com/<owner>/<repo>/<ref>--<hash>/
 ```
 
@@ -794,11 +794,11 @@ git clone --depth 1 <url> $tmp            # no sparse
 
 ### Appendix B: Config Example
 
-`~/.mycli/config.yaml` (0600, `~/.mycli` 0700):
+`~/.mskill/config.yaml` (0600, `~/.mskill` 0700):
 
 ```yaml
 cache:
-  dir: "" # default ~/.cache/mycli
+  dir: "" # default ~/.cache/mskill
   ttl: 24h
   background_update: true
   strategy: fetch
@@ -826,8 +826,8 @@ security:
   trust_enabled_at: "2026-08-28T15:05:00Z"
 ```
 
-Env overrides: `MYCLI_CACHE_DIR`, `MYCLI_DOT_DIR`, `GITHUB_TOKEN`, `SKILLS_API_URL`, `SKILLS_DOWNLOAD_URL`, `GH_HOST`.
+Env overrides: `MSKILL_CACHE_DIR`, `MSKILL_DOT_DIR`, `GITHUB_TOKEN`, `SKILLS_API_URL`, `SKILLS_DOWNLOAD_URL`, `GH_HOST`.
 
 ---
 
-*End of whitepaper. Next step: `go mod tidy && mycli --help`.*
+*End of whitepaper. Next step: `go mod tidy && mskill --help`.*

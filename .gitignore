@@ -1,6 +1,6 @@
 # binaries
-/mycli
-/mycli-*
+/mskill
+/mskill-*
 
 # cache & dot folder (never commit)
 .cache/
