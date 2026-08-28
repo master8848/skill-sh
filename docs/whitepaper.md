@@ -379,6 +379,21 @@ createSymlink(cacheAbs, destAbs) // relative
 
 On `universal` agents (`.agents/skills`) global install stops at canonical dir (no extra symlink) — same as upstream `isUniversalAgent`.
 
+**Cache-view (no install):** Because `Phase 2` leaves a sparse checkout in `~/.cache/mycli/repos/...`, `Phase 3` is optional. `mycli get --show` and `mycli show/cat` reuse **Resolve → Cache** only, then `cat` from cache without linking:
+
+```
+mycli get vercel-labs/agent-skills/vercel-optimize --show
+# → Resolve + Audit (fail-closed) + Cache (sparse fetch if needed) → print $CACHE/.../vercel-optimize/SKILL.md to stdout
+
+mycli show vercel-labs/agent-skills/vercel-optimize --file README.md --file scripts/setup.sh
+# → same, but prints additional files. Paths are sanitized against ".." and must be inside the skill.
+
+mycli show vercel-labs/agent-skills/vercel-optimize --list
+# → lists files in cached skill (like `ls` of cache view) without installing.
+```
+
+All view paths run the same security gate as `get` (audit → password if `UNSAFE/UNKNOWN` unless `trust enable`). This lets humans and agents inspect a skill inline after approval, even for same-skill auxiliary files, without polluting any agent directory.
+
 **Hash tracking:** `skillFolderHash = sha256(sorted file paths + contents)` stored in global `.skill-lock.json` v3 and project `skills-lock.json` v1 for `update` diffing — keep compatibility.
 
 ---
@@ -553,6 +568,12 @@ Commands:
   get, add      Resolve → Cache → Link a skill (alias: a)
                 mycli get vercel-labs/agent-skills/vercel-optimize
                 mycli get owner/repo --skill s1 --skill s2 --agent claude-code --global --copy
+                mycli get owner/repo/skill --show          # fetch+cache, print SKILL.md to stdout, no link
+                mycli get owner/repo --skill s1 --show --file SKILL.md
+  show, cat     View cached skill files without installing
+                mycli show owner/repo/skill                # prints SKILL.md after audit approval
+                mycli show owner/repo/skill --file README.md --file hooks/setup.sh
+                mycli show owner/repo/skill --list         # list files in cached skill
   search, find  Search with safe/unsafe signal (topic/official like web)
                 mycli search react --topic react
                 mycli search --topic nextjs --official
@@ -573,7 +594,9 @@ Flags (global):
   -v, --version       version
 ```
 
-**`get/add` flags:** `-g/--global`, `-p/--project`, `-a/--agent <list|*>`, `-s/--skill <list|*>`, `-l/--list` (list skills without installing), `--ref <branch|tag|sha>`, `--copy`, `--link-mode symlink|copy|auto`, `--force` (refresh cache), `--full-depth`, `--subagent`.
+**`get/add` flags:** `-g/--global`, `-p/--project`, `-a/--agent <list|*>`, `-s/--skill <list|*>`, `-l/--list` (list skills without installing), `--show` (print base file to stdout after security approval, no link), `--file <path>` (with `--show`: which file(s) to print), `--ref <branch|tag|sha>`, `--copy`, `--link-mode symlink|copy|auto`, `--force` (refresh cache), `--full-depth`, `--subagent`.
+
+**`show/cat` flags:** `[skill-ref]`, `--file <path>` (repeatable; default `SKILL.md`), `--list` (list files instead of printing), `--ref`, `--force`.
 
 **`search` flags:** `[query]`, `--topic` (react|nextjs|design|mobile|agent-workflows|databases|testing|marketing|all), `--official` (only https://www.skills.sh/official), `--owner`, `--limit`, `--header` (print TSV header). No `--json` — output is compact text by design.
 
