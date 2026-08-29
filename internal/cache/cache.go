@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -911,6 +912,86 @@ func List(paths config.Paths) ([]CachedEntry, error) {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Meta.LastAccess.After(out[j].Meta.LastAccess)
 	})
+	return out, nil
+}
+
+// ListSkills discovers skill directories inside a cached repo.
+// It uses `git ls-tree -r --name-only HEAD` (works with sparse/filter checkout) to find
+// SKILL.md / skill.md files, plus a filesystem walk fallback for depth 5.
+// Returns sorted unique relative dir paths (e.g. "skills/my-skill") that contain SKILL.md.
+func ListSkills(ctx context.Context, cachePath string) ([]string, error) {
+	found := map[string]bool{}
+	// 1) git ls-tree enumeration (sparse-aware: reads tree object, not working dir)
+	if out, err := git.Run(ctx, cachePath, "ls-tree", "-r", "--name-only", "HEAD"); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			base := path.Base(line)
+			if !strings.EqualFold(base, "SKILL.md") && !strings.EqualFold(base, "skill.md") {
+				continue
+			}
+			dir := path.Dir(line)
+			if dir == "." {
+				dir = ""
+			}
+			// Normalize to filepath separators for display but keep forward slash for git path?
+			// Return as path-style (forward slash) relative; caller joins with filepath.Join which normalizes.
+			dir = path.Clean(dir)
+			if dir == "." {
+				dir = ""
+			}
+			if dir == "" {
+				// Root SKILL.md => skill at repo root (use "." or "" to signal root)
+				// Represent as "." so caller can handle; but many repos place skills in subdirs.
+				// Include "" only if not already? We map "" to repo root skill.
+				found[""] = true
+			} else {
+				found[dir] = true
+			}
+		}
+	}
+	// 2) filesystem walk fallback / supplement (covers untracked or shallow edge cases + local repos)
+	_ = filepath.WalkDir(cachePath, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			rel, _ := filepath.Rel(cachePath, p)
+			if rel != "." && strings.Count(rel, string(os.PathSeparator)) >= 5 {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(d.Name(), "SKILL.md") && !strings.EqualFold(d.Name(), "skill.md") {
+			return nil
+		}
+		dir := filepath.Dir(p)
+		rel, err := filepath.Rel(cachePath, dir)
+		if err != nil {
+			return nil
+		}
+		if rel == "." {
+			found[""] = true
+		} else {
+			// Normalize to forward slashes for consistency with git path
+			rel = filepath.ToSlash(rel)
+			found[rel] = true
+		}
+		return nil
+	})
+	var out []string
+	for k := range found {
+		// normalize empty "" to "" (root). Caller treats "" as repo root.
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	// Filter empty "" handling: if repo has single root skill and also subdir skills, keep both.
+	// Remove duplicate due to path variants (e.g. "./")
 	return out, nil
 }
 
