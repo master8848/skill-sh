@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"skill.sh/mskill/internal/api"
 	"skill.sh/mskill/internal/search"
+	"skill.sh/mskill/internal/security"
 )
 
 var searchCmd = &cobra.Command{
@@ -31,25 +34,42 @@ var searchCmd = &cobra.Command{
 
 		if topic != "" {
 			allowed := map[string]bool{"react": true, "nextjs": true, "design": true, "mobile": true, "agent-workflows": true, "databases": true, "testing": true, "marketing": true, "all": true}
-			if !allowed[strings.ToLower(strings.TrimSpace(topic))] {
-				return fmt.Errorf("invalid --topic %q: must be one of react|nextjs|design|mobile|agent-workflows|databases|testing|marketing|all", topic)
+			aliases := map[string]string{
+				"typescript": "all", "tailwind": "design", "css": "design",
+				"deploy": "databases", "docker": "databases", "kubernetes": "databases", "ci-cd": "databases", "ci/cd": "databases",
+				"jest": "testing", "playwright": "testing", "e2e": "testing",
+				"docs": "all", "readme": "all", "changelog": "all", "api-docs": "all",
+				"review": "all", "lint": "all",
+				"workflow": "agent-workflows", "automation": "agent-workflows",
+			}
+			norm := strings.ToLower(strings.TrimSpace(topic))
+			if !allowed[norm] {
+				if mapped, ok := aliases[norm]; ok {
+					topic = mapped
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: unknown --topic %q: treating as keyword filter\n", topic)
+				}
+			} else {
+				topic = norm
 			}
 		}
 		if owner != "" {
 			// validate owner per spec ^[a-z0-9](?:[a-z0-9-]{0,38})$
 			low := strings.ToLower(owner)
-			valid := len(low) >= 1 && len(low) <= 39 && low[0] >= 'a' && low[0] <= 'z' || (low[0] >= '0' && low[0] <= '9')
-			if !valid {
-				// simple check: first char alnum, rest alnum or -
-				for i, r := range low {
-					if i == 0 {
-						if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
-							return fmt.Errorf("invalid --owner %q", owner)
-						}
-					} else {
-						if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
-							return fmt.Errorf("invalid --owner %q", owner)
-						}
+			if len(low) < 1 || len(low) > 39 {
+				return fmt.Errorf("invalid --owner %q", owner)
+			}
+			if !((low[0] >= 'a' && low[0] <= 'z') || (low[0] >= '0' && low[0] <= '9')) {
+				return fmt.Errorf("invalid --owner %q", owner)
+			}
+			for i, r := range low {
+				if i == 0 {
+					if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+						return fmt.Errorf("invalid --owner %q", owner)
+					}
+				} else {
+					if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+						return fmt.Errorf("invalid --owner %q", owner)
 					}
 				}
 			}
@@ -77,12 +97,24 @@ var searchCmd = &cobra.Command{
 		}
 		if len(strings.TrimSpace(query)) < 2 {
 			if strings.TrimSpace(topic) == "" && !official && strings.TrimSpace(owner) == "" {
-				// also check TTY for nicer hint but always error; no silent 1 with empty out/err.
-				return fmt.Errorf("query required (at least 2 characters); try: mskill search <query>  or  mskill search --topic react --header | column -t -s $'\\t'")
-			}
-			// Topic/official/owner present but q still short (e.g. owner \"a\") -> use broad
-			if len(strings.TrimSpace(query)) < 2 {
-				query = "skill"
+				if security.IsInteractiveTTY() && !security.IsAgentEnv() {
+					var ans string
+					prompt := &survey.Input{Message: "Search skills:"}
+					if err := survey.AskOne(prompt, &ans); err != nil {
+						return err
+					}
+					if len(strings.TrimSpace(ans)) < 2 {
+						return fmt.Errorf("query required (at least 2 characters); try: mskill search <query>")
+					}
+					query = strings.TrimSpace(ans)
+				} else {
+					return fmt.Errorf("query required in non-interactive mode; try: mskill search <query>")
+				}
+			} else {
+				// Topic/official/owner present but q still short (e.g. owner \"a\") -> use broad
+				if len(strings.TrimSpace(query)) < 2 {
+					query = "skill"
+				}
 			}
 		}
 
@@ -107,10 +139,15 @@ var searchCmd = &cobra.Command{
 		// Client-side filters
 		filtered := search.FilterByTopic(skills, topic)
 		filtered = search.FilterByOfficial(filtered, official)
-		// If query non-empty, also filter locally if server didn't? Keep all.
-		// Sort already by installs server side; trim to limit
+		// Ensure client-side sort by installs descending before trimming (legacy API may not guarantee sort)
+		sort.Slice(filtered, func(i, j int) bool { return filtered[i].Installs > filtered[j].Installs })
 		if len(filtered) > limit {
 			filtered = filtered[:limit]
+		}
+		if len(filtered) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "No skills found for %q. Try broader keywords (e.g., react, typescript, deploy) or check popular sources: vercel-labs/agent-skills, ComposioHQ/awesome-claude-skills. You can create your own with: npx skills init <name> or mskill get <owner/repo> --show\n", query)
+			fmt.Fprintln(cmd.OutOrStdout(), "Leaderboard: https://skills.sh")
+			return nil
 		}
 
 		// Batch audits per source (owner/repo), top-20 if >10 sources

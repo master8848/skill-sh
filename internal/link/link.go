@@ -71,12 +71,13 @@ func SanitizeName(name string) string {
 }
 
 func expandHome(p string) string {
-	if strings.HasPrefix(p, "~/") {
+	// Handle both Unix "~/..." and Windows "~\\..." prefixes.
+	if len(p) >= 2 && p[0] == '~' && (p[1] == '/' || p[1] == '\\') {
 		home, _ := os.UserHomeDir()
-		if home != "" {
-			return filepath.Join(home, p[2:])
+		if home == "" {
+			return p[2:]
 		}
-		return p[2:]
+		return filepath.Join(home, p[2:])
 	}
 	if p == "~" {
 		home, _ := os.UserHomeDir()
@@ -85,8 +86,6 @@ func expandHome(p string) string {
 		}
 		return p
 	}
-	// Also handle plain "~/.xxx" already handled; handle "~/.agents" case above.
-	// If path starts with "~/" we already did. If it is exactly expanded variant with no slash, handle.
 	return p
 }
 
@@ -279,18 +278,20 @@ func CopyDirectory(src, dst string) error {
 			return nil
 		}
 		// skip .git, __pycache__, and internal cache metadata
+		// Use case-insensitive comparison (EqualFold) so Windows case variations are handled;
+		// safe on Unix as well (always case-insensitive to be robust).
 		parts := strings.Split(filepath.ToSlash(rel), "/")
 		for _, p := range parts {
-			if p == ".git" || p == "__pycache__" {
+			if strings.EqualFold(p, ".git") || strings.EqualFold(p, "__pycache__") {
 				if info.IsDir() {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 		}
-		// skip .mskill-meta.json and .lock at any level
+		// skip .mskill-meta.json and .lock at any level (case-insensitive for Windows)
 		base := filepath.Base(rel)
-		if base == ".mskill-meta.json" || base == ".lock" {
+		if strings.EqualFold(base, ".mskill-meta.json") || strings.EqualFold(base, ".lock") {
 			return nil
 		}
 		target := filepath.Join(dst, rel)
@@ -417,18 +418,33 @@ func CreateSymlink(target, link string) error {
 
 	var err error
 	if runtime.GOOS == "windows" {
-		// On Windows, use absolute target and let Go handle junction if needed.
-		// For directories, junction is preferred. Try symlink with target as is.
-		err = os.Symlink(target, link)
+		// Windows symlink requires Developer Mode or Administrator privileges;
+		// fallback to CopyDirectory is expected and normal on Windows.
+		// Use absolute target for Windows (junctions require absolute paths).
+		absTarget := target
+		if a, err2 := filepath.Abs(target); err2 == nil {
+			absTarget = a
+		}
+		// Handle Windows long paths (MAX_PATH 260): prefix with \\?\ if needed.
+		if len(absTarget) > 260 && !strings.HasPrefix(absTarget, `\\?\`) {
+			absTarget = `\\?\` + absTarget
+		}
+		err = os.Symlink(absTarget, link)
 	} else {
 		err = os.Symlink(rel, link)
 	}
 	if err != nil {
-		// Fallback to copy
+		// Fallback to copy - expected on Windows due to privilege requirements.
 		fmt.Fprintf(os.Stderr, "warning: symlink failed (%v), falling back to copy\n", err)
 		// Remove failed link if partially created
 		_ = os.Remove(link)
-		return CopyDirectory(target, link)
+		// Ensure fallback handles abs vs rel correctly: resolve absolute source and strip \\?\ prefix if present.
+		src := target
+		if a, err2 := filepath.Abs(target); err2 == nil {
+			src = a
+		}
+		src = strings.TrimPrefix(src, `\\?\`)
+		return CopyDirectory(src, link)
 	}
 	return nil
 }
@@ -537,9 +553,13 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 				fmt.Fprintf(os.Stderr, "dry-run: would install %s -> %s (mode=%s)\n", cacheAbs, dest, effectiveMode)
 				continue
 			}
-			// If dest exists, remove
-			if _, err := os.Lstat(dest); err == nil {
-				_ = os.RemoveAll(dest)
+			// If dest exists, remove without recursing through symlink/junction on Windows.
+			if fi, err := os.Lstat(dest); err == nil {
+				if fi.Mode()&os.ModeSymlink != 0 {
+					_ = os.Remove(dest)
+				} else {
+					_ = os.RemoveAll(dest)
+				}
 			}
 			// Ensure parent dir
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
@@ -561,7 +581,13 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 				}
 				if linkErr != nil {
 					fmt.Fprintf(os.Stderr, "warning: symlink failed for %s -> %s (%v), falling back to copy\n", dest, cacheAbs, linkErr)
-					_ = os.RemoveAll(dest)
+					if fi, err := os.Lstat(dest); err == nil {
+						if fi.Mode()&os.ModeSymlink != 0 {
+							_ = os.Remove(dest)
+						} else {
+							_ = os.RemoveAll(dest)
+						}
+					}
 					if err := CopyDirectory(cacheAbs, dest); err != nil {
 						return fmt.Errorf("copy fallback failed for %s: %w", dest, err)
 					}
@@ -595,9 +621,17 @@ func UpdateLockfile(isGlobal bool, skillName, hash string) error {
 		if home == "" {
 			home = "."
 		}
-		// check XDG_STATE_HOME first
+		// check XDG_STATE_HOME first; on Windows also check LOCALAPPDATA/APPDATA
 		if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 			lockPath = filepath.Join(xdg, "skills", ".skill-lock.json")
+		} else if runtime.GOOS == "windows" {
+			if lad := os.Getenv("LOCALAPPDATA"); lad != "" {
+				lockPath = filepath.Join(lad, "skills", ".skill-lock.json")
+			} else if ad := os.Getenv("APPDATA"); ad != "" {
+				lockPath = filepath.Join(ad, "skills", ".skill-lock.json")
+			} else {
+				lockPath = filepath.Join(home, ".agents", ".skill-lock.json")
+			}
 		} else {
 			lockPath = filepath.Join(home, ".agents", ".skill-lock.json")
 		}

@@ -34,21 +34,60 @@ var officialAllowlist = []string{
 	"supabase",
 	"openai",
 	"google",
+	"google-gemini",
+	"google-labs-code",
 	"microsoft",
 	"notion",
+	"makenotion",
 	"linear",
 	"stripe",
 	"heygen-com",
 	"coinbase",
 	"confluent",
 	"datadog",
+	"datadog-labs",
 	"shopify",
 	"figma",
 	"mongodb",
 	"planet-scale",
+	"planetscale",
 	"prisma",
 	"neon",
+	"neondatabase",
 	"upstash",
+	"convex-dev",
+	"expo",
+	"apify",
+	"astronomer",
+	"auth0",
+	"aws",
+	"base",
+	"better-auth",
+	"brave",
+	"clerk",
+	"clickhouse",
+	"contentful",
+	"denoland",
+	"elevenlabs",
+	"firebase",
+	"flutter",
+	"github",
+	"hashicorp",
+	"huggingface",
+	"langchain-ai",
+	"nvidia",
+	"redis",
+	"remotion-dev",
+	"sanity-io",
+	"sveltejs",
+	"tavily-ai",
+	"temporalio",
+	"triggerdotdev",
+	"wix",
+	"wordpress",
+	"apollographql",
+	"posthog",
+	"pytorch",
 }
 
 func isOfficialSkill(s api.Skill) bool {
@@ -86,11 +125,13 @@ func FilterByTopic(skills []api.Skill, topic string) []api.Skill {
 	}
 	var out []api.Skill
 	for _, s := range skills {
-		// Normalize skill topic
 		st := strings.TrimSpace(strings.ToLower(s.Topic))
 		if st == "" {
-			// Heuristic: check description contains topic word? For simplicity, if empty, skip unless topic== "unknown"?
-			// If topic is "unknown" we could include empty, but spec says simple exact match, so exclude empty.
+			// Heuristic: when API returns no topic, try description/source/name/skillId/id contains topic string
+			hay := strings.ToLower(s.Description + " " + s.Source + " " + s.Name + " " + s.SkillID + " " + s.ID)
+			if strings.Contains(hay, t) {
+				out = append(out, s)
+			}
 			continue
 		}
 		if st == t {
@@ -257,10 +298,32 @@ func Render(skills []api.Skill, verdicts map[string]api.Verdict, header bool, no
 		displayVerdict := colorizeVerdict(verdictStr, enableColor)
 
 		installs := s.Installs
+		installsStr := fmt.Sprintf("%d", installs)
+		if installs > 0 && installs < 1000 && enableColor {
+			installsStr = "\x1b[33m" + installsStr + "\x1b[0m"
+		}
 		desc := truncateDesc(s.Description, 60)
 		// TSV row: slug topic official SAFE installs description
 		// Note: header says "SAFE" but row contains actual verdict string
-		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%d\t%s\n", slug, topic, officialMark, displayVerdict, installs, desc)
+		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\n", slug, topic, officialMark, displayVerdict, installsStr, desc)
+	}
+	if len(skills) > 0 && enableColor && isTTY() {
+		top := skills[0]
+		slugTop := ""
+		if top.Source != "" && top.SkillID != "" {
+			slugTop = top.Source + ":" + top.SkillID
+		} else if top.Source != "" {
+			slugTop = top.Source
+		} else if top.SkillID != "" {
+			slugTop = top.SkillID
+		} else if top.ID != "" {
+			slugTop = top.ID
+		} else {
+			slugTop = top.Name
+		}
+		slugSlash := strings.ReplaceAll(slugTop, ":", "/")
+		fmt.Fprintln(out, "")
+		fmt.Fprintf(out, "→ Install: mskill get %s -g -y  |  https://skills.sh/%s\n", slugSlash, slugSlash)
 	}
 	if tw != nil {
 		_ = tw.Flush()

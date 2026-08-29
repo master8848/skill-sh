@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -37,11 +38,26 @@ func ResolvePaths() (Paths, error) {
 	if configFile == "" {
 		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 			configFile = filepath.Join(xdg, "mskill", "config.yaml")
+		} else if runtime.GOOS == "windows" {
+			if appData := os.Getenv("APPDATA"); appData != "" {
+				configFile = filepath.Join(appData, "mskill", "config.yaml")
+			} else {
+				configFile = filepath.Join(dotDir, "config.yaml")
+			}
 		} else {
 			configFile = filepath.Join(dotDir, "config.yaml")
 		}
 	}
 	configFile = filepath.Clean(configFile)
+
+	// On Windows, dotDir should live under APPDATA when XDG_CONFIG_HOME is unset
+	// and the user has not overridden MSKILL_DOT_DIR.
+	if runtime.GOOS == "windows" && os.Getenv("MSKILL_DOT_DIR") == "" && os.Getenv("XDG_CONFIG_HOME") == "" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			dotDir = filepath.Join(appData, "mskill")
+			dotDir = filepath.Clean(dotDir)
+		}
+	}
 
 	trustFile := filepath.Join(dotDir, "trust.json")
 	trustFile = filepath.Clean(trustFile)
@@ -50,6 +66,14 @@ func ResolvePaths() (Paths, error) {
 	if cacheDir == "" {
 		if xdg := os.Getenv("XDG_CACHE_HOME"); xdg != "" {
 			cacheDir = filepath.Join(xdg, "mskill")
+		} else if runtime.GOOS == "windows" {
+			if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+				cacheDir = filepath.Join(localAppData, "mskill")
+			} else if home != "" {
+				cacheDir = filepath.Join(home, ".cache", "mskill")
+			} else {
+				cacheDir = filepath.Join(dotDir, "cache")
+			}
 		} else if home != "" {
 			cacheDir = filepath.Join(home, ".cache", "mskill")
 		} else {

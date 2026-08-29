@@ -90,6 +90,8 @@ var showCmd = &cobra.Command{
 		rawInput := normalizeColonRef(args[0])
 		// If --skill provided and raw is repo only, expand to repo/skill (like get)
 		if len(skillFilters) == 1 && skillFilters[0] != "*" {
+			// Normalize Windows separator for filter
+			skillFilters[0] = strings.ReplaceAll(skillFilters[0], "\\", "/")
 			// Check if rawInput already contains skill path beyond owner/repo
 			// If user did `show owner/repo --skill docs`, rawInput is owner/repo, expand
 			tmpR, err := resolve.ParseSkillRef(rawInput)
@@ -147,6 +149,7 @@ var showCmd = &cobra.Command{
 				targetFiles = []string{"SKILL.md"}
 			}
 			for _, f := range targetFiles {
+				f = strings.ReplaceAll(f, "\\", "/")
 				sanitized, err := resolve.SanitizeSubpath(f)
 				if err != nil {
 					return err
@@ -273,6 +276,7 @@ var showCmd = &cobra.Command{
 			targetFiles = []string{"SKILL.md"}
 		}
 		for _, f := range targetFiles {
+			f = strings.ReplaceAll(f, "\\", "/")
 			sanitized, err := resolve.SanitizeSubpath(f)
 			if err != nil {
 				return fmt.Errorf("invalid --file %q: %w", f, err)

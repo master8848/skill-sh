@@ -47,6 +47,8 @@ func SanitizeSubpath(p string) (string, error) {
 	if p == "" {
 		return "", nil
 	}
+	// Normalize Windows separators before validation to prevent `a\..\b` bypass.
+	p = strings.ReplaceAll(p, "\\", "/")
 	// Reject ".." segments in original
 	origParts := strings.Split(p, "/")
 	for _, part := range origParts {

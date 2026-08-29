@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/viper"
@@ -110,49 +109,6 @@ func isSHA(ref string) bool {
 		}
 	}
 	return true
-}
-
-func withLock(cachePath string, fn func() error) error {
-	lockPath := filepath.Join(cachePath, ".lock")
-	// Ensure parent exists. For clone case cachePath may not exist; create it (empty) so lock file can be created.
-	if err := os.MkdirAll(cachePath, 0755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout acquiring lock %s: %w", lockPath, err)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
-	return fn()
-}
-
-func tryLock(cachePath string) (func(), error) {
-	lockPath := filepath.Join(cachePath, ".lock")
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, err
-	}
-	release := func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
-		f.Close()
-	}
-	return release, nil
 }
 
 func dirSize(path string) (int64, error) {
@@ -958,7 +914,7 @@ func ListSkills(ctx context.Context, cachePath string) ([]string, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" {
+			if strings.EqualFold(d.Name(), ".git") {
 				return filepath.SkipDir
 			}
 			rel, _ := filepath.Rel(cachePath, p)

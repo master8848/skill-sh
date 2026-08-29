@@ -52,6 +52,24 @@ var rootCmd = &cobra.Command{
 		if cacheDirOverride != "" {
 			viper.Set("cache.dir", cacheDirOverride)
 		}
+		// Propagate persistent --yes / -y (mskill --yes get ...) to viper.
+		// BindPFlag already covers root persistent flag, but also check current cmd's
+		// local flag and inherited persistent flag values explicitly for robustness.
+		if viper.GetBool("yes") {
+			viper.Set("yes", true)
+		}
+		if f := cmd.Root().PersistentFlags().Lookup("yes"); f != nil && f.Value.String() == "true" {
+			viper.Set("yes", true)
+		}
+		if yesVal, err := cmd.Flags().GetBool("yes"); err == nil && yesVal {
+			viper.Set("yes", true)
+		}
+		if pf := cmd.PersistentFlags().Lookup("yes"); pf != nil && pf.Value.String() == "true" {
+			viper.Set("yes", true)
+		}
+		if inherited := cmd.InheritedFlags().Lookup("yes"); inherited != nil && inherited.Value.String() == "true" {
+			viper.Set("yes", true)
+		}
 		return nil
 	},
 }
@@ -71,6 +89,12 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cacheDirOverride, "cache-dir", "", "cache directory (default $XDG_CACHE_HOME/mskill or $HOME/.cache/mskill)")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable color output")
+	if rootCmd.PersistentFlags().Lookup("yes") == nil {
+		rootCmd.PersistentFlags().BoolP("yes", "y", false, "skip confirmation")
+	}
+	if f := rootCmd.PersistentFlags().Lookup("yes"); f != nil {
+		_ = viper.BindPFlag("yes", f)
+	}
 
 	viper.SetEnvPrefix("MSKILL")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
