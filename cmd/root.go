@@ -23,7 +23,7 @@ var rootCmd = &cobra.Command{
 	Short:         "Fetch → Store → Link skill manager",
 	Long:          "mskill is a Go-native replacement for npx skills — Resolve → Cache → Link with sparse git, fail-closed security, and human-gated trust.",
 	SilenceUsage:  true,
-	SilenceErrors: true,
+	SilenceErrors: false,
 	Version:       version,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if cfgFile != "" {

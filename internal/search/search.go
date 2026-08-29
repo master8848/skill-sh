@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"unicode/utf8"
 
 	"skill.sh/mskill/internal/api"
@@ -175,6 +176,9 @@ func colorizeOfficial(mark string, enableColor bool) string {
 }
 
 // Render prints TSV per whitepaper §8.4.
+// Raw TSV (tabs) is kept for pipes/--no-color so `cut -f1` and `awk -F'\t'` work.
+// For interactive TTY with color, a tabwriter is used to align columns visually;
+// pipe/NO_COLOR/TERM=dumb stays raw. Documented: mskill search --header | column -t -s $'\t'
 func Render(skills []api.Skill, verdicts map[string]api.Verdict, header bool, noColor bool, w io.Writer) {
 	if w == nil {
 		w = os.Stdout
@@ -187,8 +191,16 @@ func Render(skills []api.Skill, verdicts map[string]api.Verdict, header bool, no
 	if os.Getenv("TERM") == "dumb" {
 		enableColor = false
 	}
+	// Use tabwriter for TTY+hue so columns align; raw TSV for pipes keeps cut -f.
+	useTabwriter := enableColor && isTTY()
+	var tw *tabwriter.Writer
+	out := w
+	if useTabwriter {
+		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		out = tw
+	}
 	if header {
-		fmt.Fprintln(w, "slug\ttopic\tofficial\tSAFE\tinstalls\tdescription")
+		fmt.Fprintln(out, "slug\ttopic\tofficial\tSAFE\tinstalls\tdescription")
 	}
 	for _, s := range skills {
 		// slug: source/skillId or owner/repo fallback
@@ -206,7 +218,7 @@ func Render(skills []api.Skill, verdicts map[string]api.Verdict, header bool, no
 		}
 		topic := s.Topic
 		if topic == "" {
-			topic = "unknown"
+			topic = ""
 		}
 		officialMark := ""
 		if isOfficialSkill(s) {
@@ -246,7 +258,10 @@ func Render(skills []api.Skill, verdicts map[string]api.Verdict, header bool, no
 		desc := truncateDesc(s.Description, 60)
 		// TSV row: slug topic official SAFE installs description
 		// Note: header says "SAFE" but row contains actual verdict string
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", slug, topic, officialMark, displayVerdict, installs, desc)
+		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%d\t%s\n", slug, topic, officialMark, displayVerdict, installs, desc)
+	}
+	if tw != nil {
+		_ = tw.Flush()
 	}
 }
 

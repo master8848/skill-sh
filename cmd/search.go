@@ -16,7 +16,7 @@ var searchCmd = &cobra.Command{
 	Use:     "search [query]",
 	Aliases: []string{"find"},
 	Short:   "Search skills with SAFE/UNSAFE/UNKNOWN and topic/official filters",
-	Long:    "Search skills.sh with compact TSV output. Web parity: --topic mirrors https://www.skills.sh/topic and --official mirrors https://www.skills.sh/official.",
+	Long:    "Search skills.sh with compact TSV output. Web parity: --topic mirrors https://www.skills.sh/topic and --official mirrors https://www.skills.sh/official.\nOutput is raw TSV (tabs) for pipes: use --no-color for plain TSV and `| column -t -s $'\\t'` or `| cut -f1,4` / `awk -F'\\t'`. Interactive TTY aligns columns via tabwriter; --owner alone uses owner as query (API requires q>=2).",
 	Args:    cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := ""
@@ -55,15 +55,35 @@ var searchCmd = &cobra.Command{
 			}
 		}
 
-		// Interactive fallback: if query=="" and TTY, prompt? For non-interactive with no query, require query.
-		if strings.TrimSpace(query) == "" && topic == "" && !official && owner == "" {
-			// check TTY
-			fi, _ := os.Stdin.Stat()
-			isTTY := fi != nil && fi.Mode()&os.ModeCharDevice != 0
-			if !isTTY {
-				return fmt.Errorf("query required in non-interactive mode")
+		// Validate query length: skills.sh API requires q>=2 chars or it returns
+		// 400 {"error":"Query must be at least 2 characters"}. With SilenceErrors:false
+		// that surfaced as silent exit 1 (no stdout/stderr) — now surfaced via cobra.
+		// Provide hint and auto-fill q from --owner/--topic/--official for parity:
+		//   mskill search --owner vercel        -> q=vercel
+		//   mskill search --topic react         -> q=react
+		//   mskill search --official            -> q=skill
+		trimmed := strings.TrimSpace(query)
+		if len(trimmed) < 2 {
+			if strings.TrimSpace(owner) != "" && len(strings.TrimSpace(owner)) >= 2 {
+				query = strings.TrimSpace(owner)
+				trimmed = query
+			} else if strings.TrimSpace(topic) != "" && strings.ToLower(strings.TrimSpace(topic)) != "all" && len(strings.TrimSpace(topic)) >= 2 {
+				query = strings.TrimSpace(topic)
+				trimmed = query
+			} else if strings.ToLower(strings.TrimSpace(topic)) == "all" || official {
+				query = "skill"
+				trimmed = query
 			}
-			// For simplicity in non-TTY with no query, just search empty (server returns top)
+		}
+		if len(strings.TrimSpace(query)) < 2 {
+			if strings.TrimSpace(topic) == "" && !official && strings.TrimSpace(owner) == "" {
+				// also check TTY for nicer hint but always error; no silent 1 with empty out/err.
+				return fmt.Errorf("query required (at least 2 characters); try: mskill search <query>  or  mskill search --topic react --header | column -t -s $'\\t'")
+			}
+			// Topic/official/owner present but q still short (e.g. owner \"a\") -> use broad
+			if len(strings.TrimSpace(query)) < 2 {
+				query = "skill"
+			}
 		}
 
 		if limit <= 0 {
