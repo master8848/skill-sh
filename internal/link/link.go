@@ -109,7 +109,7 @@ func ResolveDestinations(agentFilter string, globalOnly, projectOnly bool) []Age
 			}
 		}
 		if len(names) == 0 {
-			names = []string{"claude", "agents", "project"}
+			names = []string{"agents"}
 		}
 	} else if filter == "*" {
 		// all
@@ -219,6 +219,13 @@ func SkillFolderHash(dir string) (string, error) {
 		if strings.Contains(rel, "__pycache__") {
 			return nil
 		}
+		// skip internal cache metadata files
+		if rel == ".mskill-meta.json" || rel == ".lock" || strings.HasSuffix(rel, ".mskill-meta.json") || strings.HasSuffix(rel, "/.lock") {
+			return nil
+		}
+		if filepath.Base(rel) == ".mskill-meta.json" || filepath.Base(rel) == ".lock" {
+			return nil
+		}
 		// For symlink handling, we dereference: if entry is symlink, we still hash target content?
 		// WalkDir follows symlink? By default it does not follow. We'll hash the file content as is.
 		files = append(files, rel)
@@ -271,7 +278,7 @@ func CopyDirectory(src, dst string) error {
 		if rel == "." {
 			return nil
 		}
-		// skip .git and __pycache__
+		// skip .git, __pycache__, and internal cache metadata
 		parts := strings.Split(filepath.ToSlash(rel), "/")
 		for _, p := range parts {
 			if p == ".git" || p == "__pycache__" {
@@ -280,6 +287,11 @@ func CopyDirectory(src, dst string) error {
 				}
 				return nil
 			}
+		}
+		// skip .mskill-meta.json and .lock at any level
+		base := filepath.Base(rel)
+		if base == ".mskill-meta.json" || base == ".lock" {
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 

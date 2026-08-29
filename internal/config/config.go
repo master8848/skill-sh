@@ -103,7 +103,7 @@ func InitViper(p Paths) error {
 	viper.SetDefault("sparse.enabled", true)
 	viper.SetDefault("sparse.cone", true)
 	viper.SetDefault("link.mode", "auto")
-	viper.SetDefault("link.targets", []string{"claude", "agents", "project"})
+	viper.SetDefault("link.targets", []string{"agents"})
 	viper.SetDefault("git.bin", "git")
 	viper.SetDefault("git.timeout", 60*time.Second)
 	viper.SetDefault("security.require_password_for_risky", true)
