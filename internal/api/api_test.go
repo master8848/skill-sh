@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 )
 
@@ -29,8 +28,7 @@ func TestSearchWithMock(t *testing.T) {
 		w.Write(b)
 	}))
 	defer ts.Close()
-	os.Setenv("SKILLS_API_URL", ts.URL)
-	defer os.Unsetenv("SKILLS_API_URL")
+	t.Setenv("SKILLS_API_URL", ts.URL)
 
 	got, err := Search(context.Background(), "vercel", "", 20)
 	if err != nil {
@@ -50,8 +48,7 @@ func TestAuditUnknownOnNon200(t *testing.T) {
 		w.Write([]byte("error"))
 	}))
 	defer ts.Close()
-	os.Setenv("AUDIT_URL", ts.URL)
-	defer os.Unsetenv("AUDIT_URL")
+	t.Setenv("AUDIT_URL", ts.URL)
 
 	res, err := Audit(context.Background(), "owner/repo", []string{"my-skill"})
 	if err != nil {
@@ -73,8 +70,7 @@ func TestAuditSafeVerdict(t *testing.T) {
 		w.Write([]byte(raw))
 	}))
 	defer ts.Close()
-	os.Setenv("AUDIT_URL", ts.URL)
-	defer os.Unsetenv("AUDIT_URL")
+	t.Setenv("AUDIT_URL", ts.URL)
 
 	res, _ := Audit(context.Background(), "owner/repo", []string{"my-skill"})
 	v := res["my-skill"]
@@ -90,8 +86,7 @@ func TestAuditUnsafeOnCritical(t *testing.T) {
 		w.Write([]byte(raw))
 	}))
 	defer ts.Close()
-	os.Setenv("AUDIT_URL", ts.URL)
-	defer os.Unsetenv("AUDIT_URL")
+	t.Setenv("AUDIT_URL", ts.URL)
 
 	res, _ := Audit(context.Background(), "owner/repo", []string{"my-skill"})
 	v := res["my-skill"]
@@ -107,8 +102,7 @@ func TestAuditUnsafeOnAlerts(t *testing.T) {
 		w.Write([]byte(raw))
 	}))
 	defer ts.Close()
-	os.Setenv("AUDIT_URL", ts.URL)
-	defer os.Unsetenv("AUDIT_URL")
+	t.Setenv("AUDIT_URL", ts.URL)
 
 	res, _ := Audit(context.Background(), "owner/repo", []string{"my-skill"})
 	v := res["my-skill"]

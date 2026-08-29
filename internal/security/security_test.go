@@ -10,36 +10,29 @@ import (
 )
 
 func TestIsAgentEnv(t *testing.T) {
-	origCI := os.Getenv("CI")
-	origGH := os.Getenv("GITHUB_ACTIONS")
-	defer func() {
-		os.Setenv("CI", origCI)
-		os.Setenv("GITHUB_ACTIONS", origGH)
-	}()
-
-	os.Unsetenv("CI")
-	os.Unsetenv("GITHUB_ACTIONS")
-	os.Unsetenv("GITLAB_CI")
-	os.Unsetenv("AGENT")
-	os.Unsetenv("CLAUDECODE")
-	os.Unsetenv("CURSOR_AGENT")
-	os.Unsetenv("OPENCODE")
-	os.Unsetenv("VSCODE_AGENT")
-	os.Unsetenv("CODESPACES")
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("GITLAB_CI", "")
+	t.Setenv("AGENT", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CURSOR_AGENT", "")
+	t.Setenv("OPENCODE", "")
+	t.Setenv("VSCODE_AGENT", "")
+	t.Setenv("CODESPACES", "")
 
 	if IsAgentEnv() {
 		t.Fatalf("expected not agent env when all unset")
 	}
-	os.Setenv("CI", "true")
+	t.Setenv("CI", "true")
 	if !IsAgentEnv() {
 		t.Fatalf("expected agent env when CI set")
 	}
-	os.Unsetenv("CI")
-	os.Setenv("GITHUB_ACTIONS", "1")
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "1")
 	if !IsAgentEnv() {
 		t.Fatalf("expected agent env when GITHUB_ACTIONS set")
 	}
-	os.Unsetenv("GITHUB_ACTIONS")
+	t.Setenv("GITHUB_ACTIONS", "")
 }
 
 func TestIsTrustEnabled(t *testing.T) {

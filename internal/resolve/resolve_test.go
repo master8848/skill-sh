@@ -1,7 +1,6 @@
 package resolve
 
 import (
-	"os"
 	"testing"
 )
 
@@ -233,9 +232,7 @@ func TestGetOwnerRepo(t *testing.T) {
 }
 
 func TestGHHostHandling(t *testing.T) {
-	orig := os.Getenv("GH_HOST")
-	defer os.Setenv("GH_HOST", orig)
-	os.Setenv("GH_HOST", "github.example.com")
+	t.Setenv("GH_HOST", "github.example.com")
 	got, err := ParseSkillRef("myowner/myrepo/myskill")
 	if err != nil {
 		t.Fatalf("ParseSkillRef error: %v", err)
@@ -246,8 +243,8 @@ func TestGHHostHandling(t *testing.T) {
 	if got.CloneURL != "https://github.example.com/myowner/myrepo.git" {
 		t.Errorf("CloneURL got %q want %q", got.CloneURL, "https://github.example.com/myowner/myrepo.git")
 	}
-	// reset to default
-	os.Unsetenv("GH_HOST")
+	// reset to default - t.Setenv will restore after test, but we need to unset for second part
+	t.Setenv("GH_HOST", "")
 	got2, err := ParseSkillRef("myowner/myrepo")
 	if err != nil {
 		t.Fatalf("error: %v", err)
