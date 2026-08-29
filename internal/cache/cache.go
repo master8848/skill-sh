@@ -875,6 +875,45 @@ func GC(paths config.Paths, dryRun bool) ([]string, error) {
 	return deleted, nil
 }
 
+// CachedEntry describes a cached repo on disk.
+type CachedEntry struct {
+	Path string
+	Meta *Meta
+	Size int64
+}
+
+// List enumerates all cached repos under paths.CacheDir/repos.
+// It reads .mskill-meta.json in each cache dir, computes dir size, and sorts by LastAccess descending.
+func List(paths config.Paths) ([]CachedEntry, error) {
+	reposDir := filepath.Join(paths.CacheDir, "repos")
+	var out []CachedEntry
+	if _, err := os.Stat(reposDir); os.IsNotExist(err) {
+		return out, nil
+	}
+	err := filepath.Walk(reposDir, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && info.Name() == ".mskill-meta.json" {
+			m, err := LoadMeta(p)
+			if err != nil {
+				return nil
+			}
+			dir := filepath.Dir(p)
+			sz, _ := dirSize(dir)
+			out = append(out, CachedEntry{Path: dir, Meta: m, Size: sz})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Meta.LastAccess.After(out[j].Meta.LastAccess)
+	})
+	return out, nil
+}
+
 // Clean removes all cached repos.
 func Clean(paths config.Paths) error {
 	reposDir := filepath.Join(paths.CacheDir, "repos")

@@ -191,15 +191,20 @@ Usage:
   mskill cache <subcommand> [flags]
 
 Subcommands:
+  list, ls  list cached repos (TSV, --header for header row)
   gc      garbage-collect stale entries (LRU by lastAccess, respects .lock)
   path    print resolved cache/dot/config paths
   clean   remove all cached repos (alias for gc with max_age=0)
 
 Flags for gc:
       --dry-run     show what would be deleted
+Flags for list:
+      --header      print TSV header (source, ref, commit, size, lastAccess, installed, skills, path)
   -h, --help        help
 
 Examples:
+  mskill cache list --header | cut -f1,6
+  mskill cache ls
   mskill cache path
   mskill cache gc --dry-run
   mskill cache gc

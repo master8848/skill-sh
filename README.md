@@ -55,7 +55,7 @@ mskill search react --topic react --official --header | cut -f1,4,5
 | `mskill list` | `ls` | List installed skills |
 | `mskill remove [skills]` | `rm` | Remove installed skills |
 | `mskill update [skills]` | `upgrade` | Re-fetch + re-link to latest |
-| `mskill cache <sub>` | — | `gc`, `path`, `clean` |
+| `mskill cache <sub>` | — | `gc`, `path`, `clean`, `list`/`ls` |
 | `mskill trust <sub>` | — | `enable`, `disable`, `status`, `reset` |
 | `mskill version` | — | Print version |
 
