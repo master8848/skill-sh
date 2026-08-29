@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
+	"skill.sh/mskill/internal/security"
 )
 
 var trustCmd = &cobra.Command{
@@ -17,7 +20,11 @@ var trustEnableCmd = &cobra.Command{
 	Use:   "enable",
 	Short: "Enable trust (human TTY required)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return cmd.Help()
+		if err := security.EnableTrust(paths); err != nil {
+			return err
+		}
+		cmd.Println("trust enabled")
+		return nil
 	},
 }
 
@@ -25,7 +32,11 @@ var trustDisableCmd = &cobra.Command{
 	Use:   "disable",
 	Short: "Disable trust",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return cmd.Help()
+		if err := security.DisableTrust(paths); err != nil {
+			return err
+		}
+		cmd.Println("trust disabled")
+		return nil
 	},
 }
 
@@ -33,7 +44,24 @@ var trustStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show trust status",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return cmd.Help()
+		s := security.Status(paths)
+		trustStr := "disabled"
+		if s.TrustEnabled {
+			trustStr = "enabled"
+		}
+		pwStr := "not set"
+		if s.PasswordSet {
+			pwStr = "set"
+		}
+		cmd.Printf("Trust: %s\nPassword: %s\n", trustStr, pwStr)
+		if s.TrustAt != "" {
+			cmd.Printf("Trust enabled at: %s\n", s.TrustAt)
+		}
+		if s.PasswordAt != "" {
+			cmd.Printf("Password set at: %s\n", s.PasswordAt)
+		}
+		// never print hash
+		return nil
 	},
 }
 
@@ -41,7 +69,11 @@ var trustResetCmd = &cobra.Command{
 	Use:   "reset",
 	Short: "Reset trust and password",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return cmd.Help()
+		if err := security.ResetTrust(paths); err != nil {
+			return err
+		}
+		cmd.Println("trust reset")
+		return nil
 	},
 }
 
@@ -51,4 +83,6 @@ func init() {
 	trustCmd.AddCommand(trustDisableCmd)
 	trustCmd.AddCommand(trustStatusCmd)
 	trustCmd.AddCommand(trustResetCmd)
+	// Ensure no --yes bypass: we don't add --yes flag to trust subcommands, but global --yes via viper is checked inside security
+	_ = fmt.Sprintf
 }

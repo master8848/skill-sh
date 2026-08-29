@@ -5,6 +5,8 @@ go 1.25.5
 require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/term v0.45.0
 )
 
 require (
