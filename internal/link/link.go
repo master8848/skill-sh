@@ -459,30 +459,23 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 		return fmt.Errorf("no destinations resolved")
 	}
 
-	// Determine mode
-	mode := strings.ToLower(strings.TrimSpace(opts.LinkMode))
-	if mode == "" {
-		mode = strings.ToLower(strings.TrimSpace(viper.GetString("link.mode")))
+	// Determine mode: rawMode is "auto"|"symlink"|"copy"
+	rawMode := strings.ToLower(strings.TrimSpace(opts.LinkMode))
+	if rawMode == "" {
+		rawMode = strings.ToLower(strings.TrimSpace(viper.GetString("link.mode")))
 	}
-	if mode == "" {
-		mode = "auto"
+	if rawMode == "" {
+		rawMode = "auto"
 	}
 	if opts.Copy {
-		mode = "copy"
+		rawMode = "copy"
 	}
-	if mode == "auto" {
-		if runtime.GOOS == "windows" {
-			mode = "copy"
+	// Normalize unknown modes (junction => symlink)
+	if rawMode != "auto" && rawMode != "symlink" && rawMode != "copy" {
+		if rawMode == "junction" {
+			rawMode = "symlink"
 		} else {
-			mode = "symlink"
-		}
-	}
-	if mode != "symlink" && mode != "copy" {
-		// fallback to symlink/copy detection
-		if mode == "junction" {
-			mode = "symlink"
-		} else {
-			mode = "symlink"
+			rawMode = "symlink"
 		}
 	}
 
@@ -505,7 +498,7 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 			doGlobal = true
 			doProject = true
 		} else {
-			// neither set => both (respecting default behavior)
+			// neither set => both (respecting default behavior: global + project)
 			doGlobal = true
 			doProject = true
 		}
@@ -527,9 +520,21 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 			targets = append(targets, filepath.Join(p, sanitized))
 		}
 
+		// Per-agent effective mode: auto => universal==copy, others==symlink (windows always copy)
+		effectiveMode := rawMode
+		if rawMode == "auto" {
+			if runtime.GOOS == "windows" {
+				effectiveMode = "copy"
+			} else if ag.Universal {
+				effectiveMode = "copy"
+			} else {
+				effectiveMode = "symlink"
+			}
+		}
+
 		for _, dest := range targets {
 			if opts.DryRun {
-				fmt.Fprintf(os.Stderr, "dry-run: would install %s -> %s (mode=%s)\n", cacheAbs, dest, mode)
+				fmt.Fprintf(os.Stderr, "dry-run: would install %s -> %s (mode=%s)\n", cacheAbs, dest, effectiveMode)
 				continue
 			}
 			// If dest exists, remove
@@ -540,7 +545,7 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 				return fmt.Errorf("failed to create parent dir %s: %w", filepath.Dir(dest), err)
 			}
-			if mode == "symlink" {
+			if effectiveMode == "symlink" {
 				// Try symlink, fallback to copy on failure
 				rel := cacheAbs
 				if absDestDir, err := filepath.Abs(filepath.Dir(dest)); err == nil {
