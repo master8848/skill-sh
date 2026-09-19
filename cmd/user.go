@@ -62,12 +62,75 @@ func splitUserInput(in string) (owner, repo string) {
 	return in, ""
 }
 
+// userSingleRef parses input as a fully-qualified single skill ref.
+// It returns repo (owner/repo, with #ref preserved when the input URL
+// carries one) and rel (skill subpath) when the input already identifies
+// ONE skill: owner/repo/skill, owner/repo/skill/sub, owner/repo:skill, or a
+// full URL like https://github.com/owner/repo/tree/main/skills/my-skill.
+// It returns ok=false for owner, owner/repo, bare repo URLs, local paths,
+// and well-known feeds, which stay on the interactive picker path.
+func userSingleRef(in string) (repo, rel string, ok bool) {
+	trimmed := strings.Trim(strings.TrimSpace(in), "/")
+	if trimmed == "" {
+		return "", "", false
+	}
+	r, err := resolve.ParseSkillRef(normalizeColonRef(trimmed))
+	if err != nil || r == nil {
+		return "", "", false
+	}
+	if r.IsLocal || r.Type == "well-known" {
+		return "", "", false
+	}
+	if r.Owner == "" || r.Repo == "" {
+		return "", "", false
+	}
+	sub := r.SkillPath
+	if sub == "" {
+		sub = r.Subpath
+	}
+	sub = strings.Trim(sub, "/")
+	if sub == "" || sub == "." {
+		return "", "", false
+	}
+	repoStr := r.Owner + "/" + r.Repo
+	// Preserve the URL tree ref (e.g. /tree/main/...) — callers re-parse
+	// repo via ParseSkillRef, so stash it as a #fragment for Ensure.
+	if r.Ref != "" {
+		repoStr += "#" + r.Ref
+	}
+	return repoStr, sub, true
+}
+
+// flattenSkillFilters splits comma-separated --skill values like the
+// filter block below does, so fast-path detection agrees with it.
+func flattenSkillFilters(skills []string) []string {
+	var out []string
+	for _, s := range skills {
+		for _, p := range strings.Split(s, ",") {
+			if t := strings.TrimSpace(p); t != "" {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
+}
+
 // selectUserSkills implements step 1-4 shared by add and show:
 // discover repos for owner, MultiSelect repos, discover skills,
 // MultiSelect skills. Returns repo+rel pairs.
 func selectUserSkills(cmd *cobra.Command, ctx context.Context, owner string, refFlag string, force bool, limit int) ([]userPicked, error) {
 	repos, _ := cmd.Flags().GetStringArray("repo")
 	skills, _ := cmd.Flags().GetStringArray("skill")
+
+	// Fast path A (npx-skills-like): the positional arg already identifies
+	// ONE skill — owner/repo/skill, owner/repo/skill/sub, or a full skill
+	// URL. Mirror `mskill get owner/repo/skill`: no prompts when
+	// unambiguous. Explicit subpath wins over --skill/--repo filters.
+	if strings.TrimSpace(owner) != "" {
+		if repo, rel, ok := userSingleRef(owner); ok {
+			return []userPicked{{repo: repo, rel: rel}}, nil
+		}
+	}
 
 	// Accept owner | owner/repo | URL (e.g. https://github.com/owner/repo).
 	// A repo-level input preselects that repo and skips the repo picker.
@@ -112,6 +175,57 @@ func selectUserSkills(cmd *cobra.Command, ctx context.Context, owner string, ref
 		allRepos = append(allRepos, r)
 	}
 	sort.Strings(allRepos)
+
+	// Fast path B: --skill <exact-single-name> that matches exactly one
+	// skill across all repos skips ALL pickers (including the repo picker
+	// that would otherwise show for an owner-only input). Limited-scope
+	// inputs (preselectRepo or --repo) already skip the repo picker below,
+	// and the existing --skill filter skips the skill picker, so only the
+	// owner-only case needs this scan.
+	if flat := flattenSkillFilters(skills); len(flat) == 1 && flat[0] != "*" && preselectRepo == "" && len(repos) == 0 {
+		want := strings.ToLower(flat[0])
+		type cand struct{ repo, rel, label string }
+		var scanned []cand
+		for _, rp := range allRepos {
+			r, perr := resolve.ParseSkillRef(rp)
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "warning: skip %q: %v\n", rp, perr)
+				continue
+			}
+			cp, _, cerr := cache.Ensure(ctx, paths, r, refFlag, nil, force)
+			if cerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: skip %q: cache failed: %v\n", rp, cerr)
+				continue
+			}
+			all, _ := cache.ListSkills(ctx, cp)
+			for _, rel := range all {
+				disp := rel
+				if disp == "" {
+					disp = "."
+				}
+				scanned = append(scanned, cand{rp, rel, rp + " / " + disp})
+			}
+		}
+		var matched []userPicked
+		for _, c := range scanned {
+			if strings.ToLower(c.rel) == want || strings.ToLower(filepath.Base(c.rel)) == want {
+				matched = append(matched, userPicked{c.repo, c.rel})
+			}
+		}
+		if len(matched) == 1 {
+			return matched, nil
+		}
+		if len(matched) > 1 {
+			// One --skill name present in several repos: act on all
+			// matches directly instead of prompting.
+			return matched, nil
+		}
+		var l []string
+		for _, c := range scanned {
+			l = append(l, c.label)
+		}
+		return nil, fmt.Errorf("no matching --skill in selected repos. Available: %s", strings.Join(l, ", "))
+	}
 
 	var selRepos []string
 	if preselectRepo != "" && len(repos) == 0 {
