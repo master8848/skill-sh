@@ -18,8 +18,8 @@ func TestTSVParseabilityCutF(t *testing.T) {
 	}
 	verdicts := map[string]api.Verdict{
 		"vercel-labs/agent-skills:vercel-optimize": {Safe: true},
-		"evil/repo:risky":                           {Safe: false},
-		"owner/repo:react-skill":                    {Unknown: true},
+		"evil/repo:risky":                          {Safe: false},
+		"owner/repo:react-skill":                   {Unknown: true},
 	}
 	var buf bytes.Buffer
 	Render(skills, verdicts, false, true, &buf)
@@ -170,7 +170,7 @@ func TestRenderVerdictFallbackKeys(t *testing.T) {
 		{Source: "owner/repo", SkillID: "my-skill", Topic: "react", Installs: 2},
 	}
 	verdicts := map[string]api.Verdict{
-		"id1": {Safe: true},
+		"id1":      {Safe: true},
 		"my-skill": {Safe: false},
 	}
 	var buf bytes.Buffer

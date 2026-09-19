@@ -21,21 +21,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "mskill",
-	Short:         "Fetch → Store → Link skill manager",
-	Long: `mskill — Fetch → Store → Link skill manager.
-
-A Go-native replacement for npx skills.sh — Resolve → Cache → Link with
-sparse git, content-addressed cache, and human-gated trust (fail-closed).
-
-Anki-import example:
-  mskill get master8848/Anki-import --skill anki-import-cli --project
-  mskill get master8848/Anki-import/ --project --yes
-
-First time? Try: mskill search anki --limit 5 --header`,
-	Example: `  mskill get master8848/Anki-import --skill anki-import-cli --project
-  mskill search anki --limit 5 --header | column -t -s $'\t'
-  mskill show master8848/Anki-import --skill anki-import-cli --list`,
+	Use:   "mskill",
+	Short: "Install skills from GitHub into agent dirs",
+	Example: `  mskill search anki --limit 5
+  mskill get owner/repo --skill <name> --project`,
 	SilenceUsage:  true,
 	SilenceErrors: false,
 	Version:       version,
@@ -61,6 +50,9 @@ First time? Try: mskill search anki --limit 5 --header`,
 			viper.Set("verbose", true)
 		}
 		if noColor {
+			viper.Set("no-color", true)
+		}
+		if f := cmd.Root().PersistentFlags().Lookup("plain"); f != nil && f.Value.String() == "true" {
 			viper.Set("no-color", true)
 		}
 		if cacheDirOverride != "" {
@@ -104,7 +96,13 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default $HOME/.mskill/config.yaml or $XDG_CONFIG_HOME/mskill/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&cacheDirOverride, "cache-dir", "", "cache directory (default $XDG_CACHE_HOME/mskill or $HOME/.cache/mskill)")
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "verbose output")
+	// --plain is the agent-facing flag to strip color/decoration.
+	// --no-color is kept as a hidden deprecated alias (same viper key).
+	rootCmd.PersistentFlags().Bool("plain", false, "plain output, no color (for agents/pipes)")
+	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("plain"))
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable color output")
+	_ = viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
+	_ = rootCmd.PersistentFlags().MarkHidden("no-color")
 	if rootCmd.PersistentFlags().Lookup("yes") == nil {
 		rootCmd.PersistentFlags().BoolP("yes", "y", false, "skip confirmation")
 	}
@@ -135,4 +133,6 @@ func init() {
 
 	// Consistent version output: "mskill <version>" for both --version and `mskill version`
 	rootCmd.SetVersionTemplate("mskill {{.Version}}\n")
+	// Hide default cobra completion command (per UX decision: completion not surfaced in help)
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 }

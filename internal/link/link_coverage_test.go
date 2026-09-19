@@ -32,12 +32,12 @@ func TestExpandHome(t *testing.T) {
 
 func TestSanitizeNameEdge(t *testing.T) {
 	cases := map[string]string{
-		"Hello World!": "hello-world",
+		"Hello World!":  "hello-world",
 		"My_Skill.Name": "my_skill.name",
-		"---foo---": "foo",
-		"": "",
-		"ABC": "abc",
-		"a b c": "a-b-c",
+		"---foo---":     "foo",
+		"":              "",
+		"ABC":           "abc",
+		"a b c":         "a-b-c",
 	}
 	for in, want := range cases {
 		if got := SanitizeName(in); got != want {

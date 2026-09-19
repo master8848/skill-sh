@@ -303,14 +303,26 @@ func ParseSkillRef(input string) (*Resolved, error) {
 		}, nil
 	}
 
-	// 2. Fragment #ref handling
+	// 2. Fragment #ref handling (also allow well-known: prefix as git-like source)
+	baseInput := orig
+	isWellKnownPrefix := strings.HasPrefix(strings.ToLower(baseInput), "well-known:")
+	if isWellKnownPrefix {
+		baseInput = strings.TrimSpace(baseInput[len("well-known:"):])
+	}
 	fragmentRef := ""
 	fragmentFilter := ""
-	baseInput := orig
+	baseInputFrag := baseInput
 	if idx := strings.Index(orig, "#"); idx != -1 {
-		base := orig[:idx]
+		// Recompute base relative to stripped well-known: prefix.
+		fragBase := baseInput
 		after := orig[idx+1:]
-		isGitSource := strings.Contains(base, "/") || strings.HasPrefix(base, "github:") || strings.HasPrefix(base, "gitlab:") || strings.HasPrefix(base, "https://") || strings.HasPrefix(base, "http://")
+		// If orig had well-known: prefix before #, fragBase excludes it.
+		if isWellKnownPrefix {
+			if h := strings.Index(baseInput, "#"); h != -1 {
+				fragBase = baseInput[:h]
+			}
+		}
+		isGitSource := isWellKnownPrefix || strings.Contains(fragBase, "/") || strings.HasPrefix(fragBase, "github:") || strings.HasPrefix(fragBase, "gitlab:") || strings.HasPrefix(fragBase, "https://") || strings.HasPrefix(fragBase, "http://")
 		if isGitSource {
 			if atIdx := strings.Index(after, "@"); atIdx != -1 {
 				fragmentRef = after[:atIdx]
@@ -318,8 +330,10 @@ func ParseSkillRef(input string) (*Resolved, error) {
 			} else {
 				fragmentRef = after
 			}
-			baseInput = base
+			baseInput = fragBase
+			baseInputFrag = fragBase
 		}
+		_ = baseInputFrag
 	}
 
 	workingInput := baseInput
@@ -342,6 +356,19 @@ func ParseSkillRef(input string) (*Resolved, error) {
 					// Allow after containing "/"? For safety, if after contains "/" but before is github:/gitlab: or contains "/", treat as filter only if after is slug-like (no slash). Otherwise keep as is.
 					// If after contains "/" we consider it part of skill path, not filter. So don't split.
 				}
+			}
+		}
+	}
+
+	// Well-known URLs may carry @skill suffix (e.g. .../agent-skills@my-skill);
+	// the generic guard above skips URLs with "://", so handle them here.
+	if fragmentFilter == "" && IsWellKnownUrl(workingInput) {
+		if idx := strings.LastIndex(workingInput, "@"); idx != -1 {
+			before := workingInput[:idx]
+			after := workingInput[idx+1:]
+			if after != "" && !strings.Contains(after, "/") && !strings.Contains(after, ":") && !strings.Contains(after, "#") && !strings.Contains(after, "?") && IsWellKnownUrl(before) {
+				atFilter = after
+				workingInput = before
 			}
 		}
 	}
@@ -682,19 +709,45 @@ func ParseSkillRef(input string) (*Resolved, error) {
 			}
 			// If http URL not matched tree/bare but is GH_HOST generic bare? Could fallback to Type git with host/owner/repo parsing
 			// Check well-known before shorthand fallback for http URLs
-			if IsWellKnownUrl(workingInput) || IsWellKnownUrl(orig) {
-				// Well-known URL → Type=well-known
+			if IsWellKnownUrl(workingInput) || IsWellKnownUrl(orig) || isWellKnownPrefix {
+				// Well-known URL → Type=well-known (preserve skill filter + version ref)
 				h := host
 				if h == "" {
 					h = ghHost
 				}
+				skillPath := atFilter
+				if skillPath != "" {
+					sanitized, err := SanitizeSubpath(skillPath)
+					if err != nil {
+						return nil, err
+					}
+					skillPath = sanitized
+				}
+				slug := ""
+				if skillPath != "" {
+					slug = SanitizeName(path.Base(skillPath))
+				}
+				feedURL := workingInput
+				if strings.Contains(feedURL, "@") && skillPath != "" {
+					// workingInput already stripped of @filter above
+				}
+				if feedURL == "" {
+					feedURL = orig
+				}
+				// CloneURL keeps the feed URL without #fragment/@filter for fetching.
+				if idx := strings.Index(feedURL, "#"); idx != -1 {
+					feedURL = feedURL[:idx]
+				}
 				return &Resolved{
-					Host:     h,
-					Source:   orig,
-					CloneURL: orig,
-					Type:     "well-known",
-					Ref:      fragmentRef,
-					IsLocal:  false,
+					Host:      h,
+					SkillPath: skillPath,
+					Subpath:   skillPath,
+					Slug:      slug,
+					Source:    orig,
+					CloneURL:  feedURL,
+					Type:      "well-known",
+					Ref:       fragmentRef,
+					IsLocal:   false,
 				}, nil
 			}
 			// Hosted artifact already handled earlier, but double check
@@ -816,21 +869,42 @@ func ParseSkillRef(input string) (*Resolved, error) {
 	}
 
 	// 9. Well-known URL (https://…/.well-known/(agent-)skills) → Type=well-known
-	if IsWellKnownUrl(workingInput) || IsWellKnownUrl(orig) {
+	if IsWellKnownUrl(workingInput) || IsWellKnownUrl(orig) || isWellKnownPrefix {
 		host := ghHost
-		cloneURL := orig
+		cloneURL := workingInput
+		if cloneURL == "" {
+			cloneURL = orig
+		}
 		if u, err := url.Parse(workingInput); err == nil && u.Host != "" {
 			host = u.Host
 		} else if u, err := url.Parse(orig); err == nil && u.Host != "" {
 			host = u.Host
 		}
+		skillPath := atFilter
+		if skillPath != "" {
+			sanitized, err := SanitizeSubpath(skillPath)
+			if err != nil {
+				return nil, err
+			}
+			skillPath = sanitized
+		}
+		slug := ""
+		if skillPath != "" {
+			slug = SanitizeName(path.Base(skillPath))
+		}
+		if idx := strings.Index(cloneURL, "#"); idx != -1 {
+			cloneURL = cloneURL[:idx]
+		}
 		return &Resolved{
-			Host:     host,
-			Source:   orig,
-			CloneURL: cloneURL,
-			Type:     "well-known",
-			Ref:      fragmentRef,
-			IsLocal:  false,
+			Host:      host,
+			SkillPath: skillPath,
+			Subpath:   skillPath,
+			Slug:      slug,
+			Source:    orig,
+			CloneURL:  cloneURL,
+			Type:      "well-known",
+			Ref:       fragmentRef,
+			IsLocal:   false,
 		}, nil
 	}
 

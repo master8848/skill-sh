@@ -53,7 +53,7 @@ Supports --file for auxiliary files and --list to explore.`,
   mskill show master8848/Anki-import --skill anki-import-cli --file README.md --file scripts/setup.sh
   mskill show master8848/Anki-import --skill anki-import-cli --list
   mskill show vercel-labs/agent-skills/vercel-optimize --ref v1.2.0 --file SKILL.md`,
-	Args:    cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		if ctx == nil {
@@ -177,6 +177,12 @@ Supports --file for auxiliary files and --list to explore.`,
 		if effectiveRef == "" {
 			effectiveRef = r.Ref
 		}
+		if r.Type == "well-known" {
+			if err := runShowWellKnown(cmd, ctx, raw, r, effectiveRef, files, list, force); err != nil {
+				return err
+			}
+			return nil
+		}
 		var skillPaths []string
 		if r.SkillPath != "" {
 			skillPaths = []string{r.SkillPath}
@@ -215,24 +221,16 @@ Supports --file for auxiliary files and --list to explore.`,
 		}
 
 		// Ensure sparse checkout is materialized for a given skill rel path.
+		// Resolves bare names (find-skills) to full git paths
+		// (skills/find-skills) and unions sparse checkout via cache.Materialize.
 		ensureSkillMaterialized := func(rel string) {
 			if rel == "" {
 				return
 			}
-			full := filepath.Join(cachePath, rel)
-			if hasSkillMD(full) {
-				return
-			}
-			// Try to materialize via Ensure with that sparse path; ignore error fallback to git sparse-checkout
-			if np, _, err := cache.Ensure(ctx, paths, r, effectiveRef, []string{rel}, force); err == nil {
+			fullRel := resolveSkillRel(ctx, cachePath, rel)
+			_ = cache.Materialize(ctx, cachePath, fullRel)
+			if np, _, err := cache.Ensure(ctx, paths, r, effectiveRef, []string{fullRel}, force); err == nil {
 				cachePath = np
-				return
-			}
-			// Fallback: try git sparse-checkout directly
-			if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(rel)); gitPath != "" {
-				_ = resolveShowSkillViaGit(ctx, cachePath, gitPath)
-			} else {
-				_, _ = git.Run(ctx, cachePath, "sparse-checkout", "set", "--cone", rel)
 			}
 		}
 
@@ -378,7 +376,7 @@ Supports --file for auxiliary files and --list to explore.`,
 			if err != nil {
 				return fmt.Errorf("invalid --file %q: %v. Tip: file cannot contain \"..\" (%w)", f, err, err)
 			}
-			full := filepath.Join(baseSkillDir, sanitized)
+			full := skillFilePath(baseSkillDir, sanitized)
 			rel, err := filepath.Rel(baseSkillDir, full)
 			if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, ".."+string(os.PathSeparator)) {
 				return fmt.Errorf("file %q outside skill directory (traversal not allowed)", f)
@@ -407,11 +405,10 @@ Supports --file for auxiliary files and --list to explore.`,
 }
 
 func resolveShowSkillViaGit(ctx context.Context, cachePath, gitPath string) string {
-	full := filepath.Join(cachePath, gitPath)
-	if _, err := git.Run(ctx, cachePath, "sparse-checkout", "set", "--cone", gitPath); err == nil {
-		if _, err := os.Stat(full); err == nil {
-			return full
-		}
+	_ = cache.Materialize(ctx, cachePath, gitPath)
+	full := filepath.Join(cachePath, filepath.FromSlash(gitPath))
+	if hasSkillMD(full) {
+		return full
 	}
 	if _, err := git.Run(ctx, cachePath, "sparse-checkout", "set", "--no-cone", gitPath); err == nil {
 		if _, err := os.Stat(full); err == nil {
@@ -420,9 +417,6 @@ func resolveShowSkillViaGit(ctx context.Context, cachePath, gitPath string) stri
 	}
 	_, _ = git.Run(ctx, cachePath, "sparse-checkout", "disable")
 	_, _ = git.Run(ctx, cachePath, "read-tree", "-mu", "HEAD")
-	if _, err := os.Stat(full); err == nil {
-		return full
-	}
 	return full
 }
 

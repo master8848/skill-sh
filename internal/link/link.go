@@ -27,22 +27,22 @@ type Agent struct {
 
 // Agents map covers essential agents plus aliases. Universal agents use ~/.agents/skills
 var Agents = map[string]Agent{
-	"claude":       {Name: "claude", GlobalDir: "~/.claude/skills", ProjectDir: ".claude/skills", Universal: false},
-	"claude-code":  {Name: "claude", GlobalDir: "~/.claude/skills", ProjectDir: ".claude/skills", Universal: false},
-	"agents":       {Name: "agents", GlobalDir: "~/.agents/skills", ProjectDir: ".agents/skills", Universal: true},
-	"project":      {Name: "agents", GlobalDir: "~/.agents/skills", ProjectDir: ".agents/skills", Universal: true},
-	"codex":        {Name: "codex", GlobalDir: "~/.codex/skills", ProjectDir: ".codex/skills", Universal: false},
-	"cursor":       {Name: "cursor", GlobalDir: "~/.cursor/skills", ProjectDir: ".cursor/skills", Universal: false},
-	"windsurf":     {Name: "windsurf", GlobalDir: "~/.windsurf/skills", ProjectDir: ".windsurf/skills", Universal: false},
-	"zed":          {Name: "zed", GlobalDir: "~/.zed/skills", ProjectDir: ".zed/skills", Universal: false},
-	"opencode":     {Name: "opencode", GlobalDir: "~/.opencode/skills", ProjectDir: ".opencode/skills", Universal: false},
-	"continue":     {Name: "continue", GlobalDir: "~/.continue/skills", ProjectDir: ".continue/skills", Universal: false},
-	"aider":        {Name: "aider", GlobalDir: "~/.aider/skills", ProjectDir: ".aider/skills", Universal: false},
-	"cline":        {Name: "cline", GlobalDir: "~/.cline/skills", ProjectDir: ".cline/skills", Universal: false},
-	"copilot":      {Name: "copilot", GlobalDir: "~/.copilot/skills", ProjectDir: ".copilot/skills", Universal: false},
-	"roo":          {Name: "roo", GlobalDir: "~/.roo/skills", ProjectDir: ".roo/skills", Universal: false},
-	"antigravity":  {Name: "antigravity", GlobalDir: "~/.antigravity/skills", ProjectDir: ".antigravity/skills", Universal: false},
-	"code":         {Name: "code", GlobalDir: "~/.code/skills", ProjectDir: ".code/skills", Universal: false},
+	"claude":      {Name: "claude", GlobalDir: "~/.claude/skills", ProjectDir: ".claude/skills", Universal: false},
+	"claude-code": {Name: "claude", GlobalDir: "~/.claude/skills", ProjectDir: ".claude/skills", Universal: false},
+	"agents":      {Name: "agents", GlobalDir: "~/.agents/skills", ProjectDir: ".agents/skills", Universal: true},
+	"project":     {Name: "agents", GlobalDir: "~/.agents/skills", ProjectDir: ".agents/skills", Universal: true},
+	"codex":       {Name: "codex", GlobalDir: "~/.codex/skills", ProjectDir: ".codex/skills", Universal: false},
+	"cursor":      {Name: "cursor", GlobalDir: "~/.cursor/skills", ProjectDir: ".cursor/skills", Universal: false},
+	"windsurf":    {Name: "windsurf", GlobalDir: "~/.windsurf/skills", ProjectDir: ".windsurf/skills", Universal: false},
+	"zed":         {Name: "zed", GlobalDir: "~/.zed/skills", ProjectDir: ".zed/skills", Universal: false},
+	"opencode":    {Name: "opencode", GlobalDir: "~/.opencode/skills", ProjectDir: ".opencode/skills", Universal: false},
+	"continue":    {Name: "continue", GlobalDir: "~/.continue/skills", ProjectDir: ".continue/skills", Universal: false},
+	"aider":       {Name: "aider", GlobalDir: "~/.aider/skills", ProjectDir: ".aider/skills", Universal: false},
+	"cline":       {Name: "cline", GlobalDir: "~/.cline/skills", ProjectDir: ".cline/skills", Universal: false},
+	"copilot":     {Name: "copilot", GlobalDir: "~/.copilot/skills", ProjectDir: ".copilot/skills", Universal: false},
+	"roo":         {Name: "roo", GlobalDir: "~/.roo/skills", ProjectDir: ".roo/skills", Universal: false},
+	"antigravity": {Name: "antigravity", GlobalDir: "~/.antigravity/skills", ProjectDir: ".antigravity/skills", Universal: false},
+	"code":        {Name: "code", GlobalDir: "~/.code/skills", ProjectDir: ".code/skills", Universal: false},
 }
 
 // InstallOpts controls Install behavior.
@@ -660,6 +660,3 @@ func UpdateLockfile(isGlobal bool, skillName, hash string) error {
 	}
 	return nil
 }
-
-
-

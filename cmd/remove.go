@@ -19,7 +19,7 @@ var removeCmd = &cobra.Command{
   mskill remove --global anki-import-cli
   mskill remove --agent project anki-import-cli
   mskill remove skill-a skill-b --global`,
-	Args:    cobra.MinimumNArgs(1),
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		globalOnly, _ := cmd.Flags().GetBool("global")
 		agentFilter, _ := cmd.Flags().GetString("agent")

@@ -23,7 +23,7 @@ var searchCmd = &cobra.Command{
 
 Web parity: --topic mirrors https://www.skills.sh/topic and --official
 mirrors https://www.skills.sh/official. Output is raw TSV (tabs): pipe
-with --no-color and 'column -t -s $'\t'' / 'cut -f1,4'. TTY aligns columns
+with --plain and 'column -t -s $'\t'' / 'cut -f1,4'. TTY aligns columns
 via tabwriter; --owner alone uses owner as query (API requires q>=2).`,
 	Example: `  mskill search anki --limit 5 --header | column -t -s $'\t'
   mskill search react --topic react --official --limit 10
@@ -31,7 +31,7 @@ via tabwriter; --owner alone uses owner as query (API requires q>=2).`,
   mskill search --owner vercel --limit 5
   # install top hit:
   mskill get master8848/Anki-import --skill anki-import-cli --project`,
-	Args:    cobra.ArbitraryArgs,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := ""
 		if len(args) > 0 {
@@ -212,7 +212,7 @@ via tabwriter; --owner alone uses owner as query (API requires q>=2).`,
 				}
 				if hint != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "No results after filtering by%s. Try --topic all or remove --official. Showing unfiltered would have %d results.\n", hint, origLen)
-					fmt.Fprintf(cmd.OutOrStdout(), "Try: mskill search %q --topic all --limit %d --no-color | column -t -s $'\\t'\n", query, limit)
+					fmt.Fprintf(cmd.OutOrStdout(), "Try: mskill search %q --topic all --limit %d --plain | column -t -s $'\\t'\n", query, limit)
 					fmt.Fprintln(cmd.OutOrStdout(), "Leaderboard: https://skills.sh")
 					return nil
 				}

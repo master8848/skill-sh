@@ -56,9 +56,9 @@ var cacheGCCmd = &cobra.Command{
 }
 
 var cachePathCmd = &cobra.Command{
-	Use:   "path",
-	Short: "Print cache and dot directories",
-	Long:  "Print resolved cache, dot, and config paths (honors --cache-dir / --config / env).",
+	Use:     "path",
+	Short:   "Print cache and dot directories",
+	Long:    "Print resolved cache, dot, and config paths (honors --cache-dir / --config / env).",
 	Example: `  mskill cache path`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.Println("cache:", paths.CacheDir)
@@ -69,9 +69,9 @@ var cachePathCmd = &cobra.Command{
 }
 
 var cacheCleanCmd = &cobra.Command{
-	Use:   "clean",
-	Short: "Remove all cached repos",
-	Long:  "Remove all cached repos under --cache-dir (irreversible). Use 'cache gc' for LRU cleanup instead.",
+	Use:     "clean",
+	Short:   "Remove all cached repos",
+	Long:    "Remove all cached repos under --cache-dir (irreversible). Use 'cache gc' for LRU cleanup instead.",
 	Example: `  mskill cache clean`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := cache.Clean(paths); err != nil {

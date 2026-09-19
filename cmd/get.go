@@ -14,6 +14,7 @@ import (
 	"skill.sh/mskill/internal/api"
 	"skill.sh/mskill/internal/cache"
 	"skill.sh/mskill/internal/git"
+	"skill.sh/mskill/internal/history"
 	"skill.sh/mskill/internal/link"
 	"skill.sh/mskill/internal/resolve"
 	"skill.sh/mskill/internal/security"
@@ -42,7 +43,7 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
   # view without linking
   mskill get master8848/Anki-import --skill anki-import-cli --show --file SKILL.md
   mskill get owner/repo --skill "*" --all   # all skills → all agents`,
-	Args:    cobra.ArbitraryArgs,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		if ctx == nil {
@@ -51,6 +52,7 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 		isShow, _ := cmd.Flags().GetBool("show")
 		files, _ := cmd.Flags().GetStringArray("file")
 		refFlag, _ := cmd.Flags().GetString("ref")
+		showHistory, _ := cmd.Flags().GetBool("history")
 		force, _ := cmd.Flags().GetBool("force")
 		global, _ := cmd.Flags().GetBool("global")
 		project, _ := cmd.Flags().GetBool("project")
@@ -164,6 +166,15 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 		if len(args) > 0 {
 			raws = args
 		}
+		if showHistory {
+			if err := runGetHistory(cmd, raws, &refFlag); err != nil {
+				return err
+			}
+			if len(raws) == 0 {
+				return nil
+			}
+			// refFlag may have been overridden by selection; continue to install
+		}
 		if len(raws) == 0 {
 			return fmt.Errorf("skill reference required. Try: mskill get owner/repo/skill or mskill get owner/repo --skill <name> --help\nTip: for example mskill get vercel-labs/agent-skills --list to discover skills")
 		}
@@ -213,7 +224,10 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 				}
 				// multi-skill local handling
 				var selectedLocal []string
-				hasExplicit := r.SkillPath != "" || r.Slug != "" && strings.Contains(rawOrig, "/") && filepath.Base(rawOrig) == r.Slug
+				// Explicit only when the path itself includes a skill subpath.
+				// (Slug merely matching the base dir name is NOT explicit —
+				// otherwise --skill filters below are never consulted.)
+				hasExplicit := r.SkillPath != ""
 				// Determine if rawOrig is repo root vs skill subpath via file existence
 				if _, err := os.Stat(localPath); err != nil {
 					if len(skillFilters) > 0 {
@@ -241,7 +255,7 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 						return fmt.Errorf("local path %q does not exist: %w. Tip: check path or use mskill get owner/repo (e.g., mskill get vercel-labs/agent-skills --list)", localPath, err)
 					}
 				}
-				if hasExplicit && len(selectedLocal) == 0 {
+				if hasExplicit && len(selectedLocal) == 0 && len(skillFilters) == 0 {
 					selectedLocal = []string{localPath}
 				}
 				if len(selectedLocal) == 0 {
@@ -414,6 +428,14 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 				effectiveRef = r.Ref
 			}
 
+			// Website skill feed (no git clone): JSON index + HTTP SKILL.md.
+			if r.Type == "well-known" {
+				if err := runGetWellKnown(cmd, ctx, raw, r, skillFilters, effectiveRef, isList, isShow, files, force, global, project, agentFilter, linkMode, copyFlag); err != nil {
+					return err
+				}
+				continue
+			}
+
 			// === --list handling for remote ===
 			if isList {
 				printStep(cmd, "Caching", r.Owner+"/"+r.Repo+"…")
@@ -536,15 +558,12 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 					targetFiles = []string{"SKILL.md"}
 				}
 				for _, skillRel := range selected {
-					baseSkillDir := cachePath
-					if skillRel != "" && skillRel != "." {
-						baseSkillDir = filepath.Join(cachePath, skillRel)
-						// fallback discovery if path not materialized (sparse edge)
-						if _, err := os.Stat(baseSkillDir); err != nil {
-							if discovered := discoverSkillInCache(cachePath, filepath.Base(skillRel)); discovered != "" {
+					baseSkillDir := ensureSkillDir(ctx, cachePath, paths, r, effectiveRef, skillRel, force)
+					if skillRel == "" || skillRel == "." {
+						baseSkillDir = cachePath
+						if !hasSkillMD(baseSkillDir) {
+							if discovered := discoverAnySkill(cachePath); discovered != "" {
 								baseSkillDir = discovered
-							} else if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(skillRel)); gitPath != "" {
-								baseSkillDir = filepath.Join(cachePath, gitPath)
 							}
 						}
 					}
@@ -554,7 +573,7 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 						if err != nil {
 							return fmt.Errorf("invalid --file %q: %v. Tip: file cannot contain \"..\" (%w)", f, err, err)
 						}
-						full := filepath.Join(baseSkillDir, sanitized)
+						full := skillFilePath(baseSkillDir, sanitized)
 						rel, err := filepath.Rel(baseSkillDir, full)
 						if err != nil || strings.HasPrefix(rel, "..") {
 							return fmt.Errorf("file %q outside skill directory (traversal not allowed)", f)
@@ -613,50 +632,20 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 					}
 				}
 
-				// Resolve cacheSkillPath
+				// Resolve cacheSkillPath (handles bare names, nested
+				// skills/find-skills subpaths, and sparse materialization).
 				cacheSkillPath := cachePath
 				if skillRel != "" && skillRel != "." {
-					candidate := filepath.Join(cachePath, skillRel)
-					if _, err := os.Stat(candidate); err == nil {
-						cacheSkillPath = candidate
-					} else {
-						discovered := discoverSkillInCache(cachePath, filepath.Base(skillRel))
-						if discovered == "" {
-							if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(skillRel)); gitPath != "" {
-								discoveredGitFull := filepath.Join(cachePath, gitPath)
-								if _, err := git.Run(ctx, cachePath, "sparse-checkout", "set", "--cone", gitPath); err == nil {
-									if _, err := os.Stat(discoveredGitFull); err == nil {
-										discovered = discoveredGitFull
-									}
-								} else {
-									if _, err2 := git.Run(ctx, cachePath, "sparse-checkout", "set", "--no-cone", gitPath); err2 == nil {
-										if _, err := os.Stat(discoveredGitFull); err == nil {
-											discovered = discoveredGitFull
-										}
-									}
-								}
-								if discovered == "" {
-									_, _ = git.Run(ctx, cachePath, "sparse-checkout", "disable")
-									_, _ = git.Run(ctx, cachePath, "read-tree", "-mu", "HEAD")
-									if _, err := os.Stat(discoveredGitFull); err == nil {
-										discovered = discoveredGitFull
-									}
-								}
-							}
-						}
-						if discovered != "" {
-							cacheSkillPath = discovered
-						} else {
-							return fmt.Errorf("skill %q not found at ref %q in %s (checked %q). Try: mskill get %s/%s --skill \"*\" --ref %q, or mskill show %s/%s --list to discover\nTip: verify skill path exists at that ref", resolve.SanitizeName(filepath.Base(skillRel)), effectiveRef, cachePath, candidate, r.Owner, r.Repo, effectiveRef, r.Owner, r.Repo)
-						}
+					cacheSkillPath = ensureSkillDir(ctx, cachePath, paths, r, effectiveRef, skillRel, force)
+					if !hasSkillMD(cacheSkillPath) {
+						candidate := filepath.Join(cachePath, filepath.FromSlash(skillRel))
+						return fmt.Errorf("skill %q not found at ref %q in %s (checked %q). Try: mskill get %s/%s --skill \"*\" --ref %q, or mskill show %s/%s --list to discover\nTip: verify skill path exists at that ref", resolve.SanitizeName(filepath.Base(skillRel)), effectiveRef, cachePath, candidate, r.Owner, r.Repo, effectiveRef, r.Owner, r.Repo)
 					}
 				} else if skillRel == "" {
 					// root skill: cachePath is already skill dir if SKILL.md at root, else discover fallback
-					if _, err := os.Stat(filepath.Join(cacheSkillPath, "SKILL.md")); err != nil {
-						if _, err2 := os.Stat(filepath.Join(cacheSkillPath, "skill.md")); err2 != nil {
-							if discovered := discoverAnySkill(cachePath); discovered != "" {
-								cacheSkillPath = discovered
-							}
+					if !hasSkillMD(cacheSkillPath) {
+						if discovered := discoverAnySkill(cachePath); discovered != "" {
+							cacheSkillPath = discovered
 						}
 					}
 				}
@@ -720,10 +709,85 @@ Security is fail-closed: UNSAFE/UNKNOWN requires human trust unless mskill trust
 					}
 				}
 				cmdPrint(cmd, fmt.Sprintf("  explore: ls %s  |  mskill show %s --list\n", cacheSkillPath, raw))
+				// Record install history with version pinning + warn if not latest
+				recRef := effectiveRef
+				if recRef == "" {
+					recRef = meta.Ref
+				}
+				repoID := strings.Trim(r.Owner+"/"+r.Repo, "/")
+				_ = history.Append(paths, history.Entry{Repo: repoID, Skill: skillName, Ref: recRef, CommitSHA: meta.CommitSHA})
+				warnIfPinned(repoID, skillName, meta.CommitSHA)
 			}
 		}
 		return nil
 	},
+}
+
+// runGetHistory implements `get --history`: list recorded versions and,
+// when interactive, let the user pick an older version to reinstall by
+// overriding refFlag with the selected commit SHA.
+func runGetHistory(cmd *cobra.Command, raws []string, refFlag *string) error {
+	entries, _ := history.Load(paths)
+	filter := ""
+	if len(raws) > 0 {
+		filter = strings.ToLower(strings.TrimSpace(normalizeColonRef(raws[0])))
+	}
+	var filtered []history.Entry
+	for _, e := range entries {
+		if filter != "" && !strings.Contains(strings.ToLower(e.Repo), filter) && !strings.Contains(strings.ToLower(e.Skill), filter) && !strings.Contains(strings.ToLower(e.Repo+"/"+e.Skill), filter) {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	if len(filtered) == 0 {
+		cmd.Println("no install history")
+		return nil
+	}
+	for i, e := range filtered {
+		commit := e.CommitSHA
+		if len(commit) > 7 {
+			commit = commit[:7]
+		}
+		if commit == "" {
+			commit = "-"
+		}
+		ref := e.Ref
+		if ref == "" {
+			ref = "-"
+		}
+		cmd.Printf("%d. %s %s ref=%s commit=%s time=%s\n", i+1, e.Repo, e.Skill, ref, commit, e.Time.Format("2006-01-02 15:04:05"))
+	}
+	// Interactive selection: pick a version to reinstall
+	if security.IsInteractiveTTY() && !security.IsAgentEnv() && !viper.GetBool("yes") {
+		opts := make([]string, len(filtered))
+		for i, e := range filtered {
+			commit := e.CommitSHA
+			if len(commit) > 7 {
+				commit = commit[:7]
+			}
+			opts[i] = fmt.Sprintf("%s %s ref=%s commit=%s", e.Repo, e.Skill, e.Ref, commit)
+		}
+		var chosen string
+		prompt := &survey.Select{Message: "Select version to install:", Options: opts, Default: opts[0]}
+		if err := survey.AskOne(prompt, &chosen); err != nil {
+			return err
+		}
+		for i, o := range opts {
+			if o == chosen && filtered[i].CommitSHA != "" {
+				*refFlag = filtered[i].CommitSHA
+				fmt.Fprintf(os.Stderr, "› installing pinned version %s (ref %s)\n", filtered[i].CommitSHA[:minLen(filtered[i].CommitSHA, 7)], filtered[i].Ref)
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func minLen(s string, n int) int {
+	if len(s) < n {
+		return len(s)
+	}
+	return n
 }
 
 // promptAgentSelection shows an interactive MultiSelect for agent destinations.
@@ -971,8 +1035,6 @@ func promptSkillSelection(repo string, skills []string) ([]string, error) {
 	return out, nil
 }
 
-
-
 func discoverSkillInCache(cachePath, slug string) string {
 	var found string
 	_ = filepath.WalkDir(cachePath, func(p string, d os.DirEntry, err error) error {
@@ -1106,6 +1168,9 @@ func init() {
 	}
 	if getCmd.Flags().Lookup("all") == nil {
 		getCmd.Flags().Bool("all", false, "install all skills to all agents (equiv. --skill * --agent * -y)")
+	}
+	if getCmd.Flags().Lookup("history") == nil {
+		getCmd.Flags().Bool("history", false, "list install history and select older version to install")
 	}
 	// Guard --subagent / --metadata against duplicate registration from parallel subagents
 	if getCmd.Flags().Lookup("subagent") == nil && getCmd.PersistentFlags().Lookup("subagent") == nil && rootCmd.PersistentFlags().Lookup("subagent") == nil {

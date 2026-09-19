@@ -9,9 +9,9 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/viper"
-	"skill.sh/mskill/internal/config"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
+	"skill.sh/mskill/internal/config"
 )
 
 // IsInteractiveTTY reports whether stdin is a character device and terminal.
@@ -175,6 +175,9 @@ func trustBlockedError(action string) error {
 
 // RequirePassword gates risky skill installs.
 func RequirePassword(slug, reason string, paths config.Paths) error {
+	if IsSkillTrusted(slug) {
+		return nil
+	}
 	if IsTrustEnabled(paths) {
 		return nil
 	}
@@ -300,18 +303,96 @@ func ResetTrust(paths config.Paths) error {
 
 // StatusInfo holds trust status.
 type StatusInfo struct {
-	TrustEnabled bool
-	PasswordSet  bool
-	TrustAt      string
-	PasswordAt   string
+	TrustEnabled  bool
+	PasswordSet   bool
+	TrustAt       string
+	PasswordAt    string
+	TrustedSkills []string
 }
 
 // Status returns current trust status.
 func Status(paths config.Paths) StatusInfo {
 	return StatusInfo{
-		TrustEnabled: IsTrustEnabled(paths),
-		PasswordSet:  viper.GetString("security.password_hash") != "",
-		TrustAt:      viper.GetString("security.trust_enabled_at"),
-		PasswordAt:   viper.GetString("security.password_set_at"),
+		TrustEnabled:  IsTrustEnabled(paths),
+		PasswordSet:   viper.GetString("security.password_hash") != "",
+		TrustAt:       viper.GetString("security.trust_enabled_at"),
+		PasswordAt:    viper.GetString("security.password_set_at"),
+		TrustedSkills: ListTrustedSkills(),
 	}
+}
+
+// normalizeSkillKey lowercases and trims a skill slug for trusted-list comparison.
+func normalizeSkillKey(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// ListTrustedSkills returns the per-skill trusted slugs.
+func ListTrustedSkills() []string {
+	raw := viper.GetStringSlice("security.trusted_skills")
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range raw {
+		// support comma-separated entries from manual config edits
+		for _, part := range strings.Split(s, ",") {
+			n := normalizeSkillKey(part)
+			if n == "" || seen[n] {
+				continue
+			}
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// IsSkillTrusted reports whether a slug is in the per-skill trusted list.
+func IsSkillTrusted(slug string) bool {
+	n := normalizeSkillKey(slug)
+	if n == "" {
+		return false
+	}
+	for _, s := range ListTrustedSkills() {
+		if s == n {
+			return true
+		}
+	}
+	return false
+}
+
+// TrustSkill adds a slug to the per-skill trusted list (idempotent).
+func TrustSkill(slug string, paths config.Paths) error {
+	n := normalizeSkillKey(slug)
+	if n == "" {
+		return fmt.Errorf("skill name required")
+	}
+	if IsSkillTrusted(n) {
+		return nil
+	}
+	current := ListTrustedSkills()
+	current = append(current, n)
+	viper.Set("security.trusted_skills", current)
+	return config.WriteConfig(paths)
+}
+
+// UntrustSkill removes a slug from the per-skill trusted list.
+func UntrustSkill(slug string, paths config.Paths) error {
+	n := normalizeSkillKey(slug)
+	if n == "" {
+		return fmt.Errorf("skill name required")
+	}
+	current := ListTrustedSkills()
+	var kept []string
+	found := false
+	for _, s := range current {
+		if s == n {
+			found = true
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if !found {
+		return fmt.Errorf("skill %q is not in trusted list", slug)
+	}
+	viper.Set("security.trusted_skills", kept)
+	return config.WriteConfig(paths)
 }

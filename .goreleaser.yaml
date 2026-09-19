@@ -17,9 +17,9 @@ checksum:
   name_template: checksums.txt
 brews:
   - repository:
-      owner: skill-sh
+      owner: master8848
       name: homebrew-tap
     folder: Formula
-    homepage: https://skills.sh
+    homepage: https://github.com/master8848/skill-sh
     description: "Fetch → Store → Link skill manager"
     binary: mskill

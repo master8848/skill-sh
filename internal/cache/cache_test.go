@@ -96,5 +96,5 @@ func TestMetaPathAndCacheDirPath(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return strings.Contains(s, sub) }
+func contains(s, sub string) bool  { return strings.Contains(s, sub) }
 func split(s, sep string) []string { return strings.Split(s, sep) }

@@ -10,8 +10,8 @@
 # go
 go install skill.sh/mskill@latest
 
-# brew
-brew install mskill
+# brew (tap)
+brew install master8848/tap/mskill
 
 # curl (future install.sh)
 curl -fsSL https://skills.sh/install.sh | sh

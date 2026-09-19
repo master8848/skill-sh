@@ -19,10 +19,10 @@ import (
 func TestFetchStoreLink_SparseAndTTL(t *testing.T) {
 	paths := testutil.TempPaths(t)
 	repoDir := testutil.InitGitRepo(t, "", map[string]string{
-		"my-skill/SKILL.md":        "# My Skill\nhello",
-		"my-skill/README.md":       "readme",
-		"other-skill/SKILL.md":     "# Other",
-		"root.txt":                 "root",
+		"my-skill/SKILL.md":    "# My Skill\nhello",
+		"my-skill/README.md":   "readme",
+		"other-skill/SKILL.md": "# Other",
+		"root.txt":             "root",
 	})
 
 	// resolved via shorthand owner/repo/skill but we override CloneURL to file:// repo

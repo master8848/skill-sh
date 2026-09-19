@@ -138,6 +138,7 @@ func InitViper(p Paths) error {
 	viper.SetDefault("security.salt", "")
 	viper.SetDefault("security.password_set_at", "")
 	viper.SetDefault("security.trust_enabled_at", "")
+	viper.SetDefault("security.trusted_skills", []string{})
 	viper.SetDefault("verbose", false)
 	viper.SetDefault("no-color", false)
 

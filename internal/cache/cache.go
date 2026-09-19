@@ -200,6 +200,10 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 	if resolved == nil {
 		return "", nil, fmt.Errorf("resolved is nil")
 	}
+	// Website skill feed: no git clone, fetch JSON index + SKILL.md over HTTP.
+	if resolved.Type == "well-known" {
+		return EnsureWellKnown(ctx, paths, resolved, ref, skillPaths, force)
+	}
 	effectiveRef := ref
 	if effectiveRef == "" {
 		effectiveRef = resolved.Ref
@@ -264,7 +268,10 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 							return nil
 						})
 						if expErr == nil {
-							existingMeta.SparsePaths = allPaths
+							existingMeta.SparsePaths = ExpandSparsePaths(ctx, cachePath, allPaths)
+							if len(existingMeta.SparsePaths) == 0 {
+								existingMeta.SparsePaths = dedup(allPaths)
+							}
 							existingMeta.LastAccess = time.Now()
 							_ = SaveMeta(metaPath, existingMeta)
 							return cachePath, existingMeta, nil
@@ -335,7 +342,10 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 										fmt.Fprintf(os.Stderr, "warning: sparse-checkout unsupported, using full checkout\n")
 									}
 								} else {
-									m.SparsePaths = allPaths
+									m.SparsePaths = ExpandSparsePaths(ctx, cachePath, allPaths)
+									if len(m.SparsePaths) == 0 {
+										m.SparsePaths = allPaths
+									}
 								}
 							}
 						}
@@ -371,9 +381,19 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 							}
 						} else {
 							if hasMeta {
-								m.SparsePaths = allPaths
+								expanded := ExpandSparsePaths(ctx, cachePath, allPaths)
+								if len(expanded) > 0 {
+									m.SparsePaths = expanded
+								} else {
+									m.SparsePaths = allPaths
+								}
 							}
 						}
+					}
+				} else if hasMeta {
+					// Even when nothing is missing, normalize short names to full paths.
+					if expanded := ExpandSparsePaths(ctx, cachePath, m.SparsePaths); len(expanded) > 0 {
+						m.SparsePaths = expanded
 					}
 				}
 			}
@@ -397,7 +417,11 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 				m.CommitSHA = commitSHA
 			}
 			if len(skillPaths) > 0 {
-				m.SparsePaths = dedup(append(m.SparsePaths, skillPaths...))
+				expanded := ExpandSparsePaths(ctx, cachePath, skillPaths)
+				if len(expanded) == 0 {
+					expanded = dedup(skillPaths)
+				}
+				m.SparsePaths = dedup(append(m.SparsePaths, expanded...))
 				// remove empty
 				tmp := []string{}
 				for _, p := range m.SparsePaths {
@@ -596,6 +620,10 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 
 		// Create meta
 		now := time.Now()
+		expandedMeta := ExpandSparsePaths(ctx, cachePath, skillPaths)
+		if len(expandedMeta) == 0 && len(dedup(skillPaths)) > 0 {
+			expandedMeta = dedup(skillPaths)
+		}
 		mNew := &Meta{
 			Host:        host,
 			Owner:       owner,
@@ -603,7 +631,7 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 			Ref:         effectiveRef,
 			CloneURL:    cloneURL,
 			CommitSHA:   commitSHA,
-			SparsePaths: dedup(skillPaths),
+			SparsePaths: expandedMeta,
 			Shallow:     true,
 			Depth:       1,
 			Filter:      filterUsed,
@@ -642,17 +670,31 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 
 func missingPaths(wanted, existing []string) []string {
 	set := make(map[string]bool, len(existing))
+	baseSet := make(map[string]bool, len(existing))
 	for _, e := range existing {
 		set[e] = true
+		// Basename cover: "skills/find-skills" covers "find-skills".
+		e = strings.ReplaceAll(e, "\\", "/")
+		e = strings.Trim(e, "/")
+		if e != "" {
+			baseSet[strings.ToLower(path.Base(e))] = true
+			set[strings.ToLower(e)] = true
+		}
 	}
 	var missing []string
 	for _, w := range wanted {
 		if w == "" {
 			continue
 		}
-		if !set[w] {
-			missing = append(missing, w)
+		wn := strings.ReplaceAll(w, "\\", "/")
+		wn = strings.Trim(wn, "/")
+		if set[w] || set[wn] || set[strings.ToLower(wn)] {
+			continue
 		}
+		if !strings.Contains(wn, "/") && baseSet[strings.ToLower(path.Base(wn))] {
+			continue
+		}
+		missing = append(missing, w)
 	}
 	return missing
 }
@@ -681,10 +723,172 @@ func applySparseCheckout(ctx context.Context, dir string, paths []string) error 
 	if len(filtered) == 0 {
 		return nil
 	}
+	// Expand bare skill names (e.g. "find-skills") to full git paths
+	// (e.g. "skills/find-skills") so cone-mode checkout materializes them.
+	filtered = ExpandSparsePaths(ctx, dir, filtered)
+	if len(filtered) == 0 {
+		return nil
+	}
 	out, err := git.Run(ctx, dir, append([]string{"sparse-checkout", "set", "--cone"}, filtered...)...)
 	if err != nil {
 		return fmt.Errorf("sparse-checkout set failed: %w: %s", err, string(out))
 	}
+	return nil
+}
+
+// FindSkillGitPath locates the full git-relative dir for a skill basename
+// using `git ls-tree` (works even when sparse checkout hasn't materialized
+// the working tree). Match is case-insensitive on the leaf dir name.
+// Returns "" when not found. Path uses forward slashes.
+func FindSkillGitPath(ctx context.Context, dir, slug string) string {
+	slug = strings.Trim(strings.ReplaceAll(slug, "\\", "/"), "/")
+	if slug == "" {
+		return ""
+	}
+	base := slug
+	if strings.Contains(slug, "/") {
+		base = path.Base(slug)
+	}
+	out, err := git.Run(ctx, dir, "ls-tree", "-r", "--name-only", "HEAD")
+	if err != nil {
+		return ""
+	}
+	// Exact leaf match first.
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.EqualFold(path.Base(line), "SKILL.md") {
+			continue
+		}
+		d := path.Dir(line)
+		if strings.EqualFold(path.Base(d), base) {
+			if d == "." {
+				return ""
+			}
+			return path.Clean(d)
+		}
+	}
+	// Substring fallback (slug appears in skill path).
+	low := strings.ToLower(base)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.EqualFold(path.Base(line), "SKILL.md") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(line), low) {
+			d := path.Dir(line)
+			if d == "." {
+				return ""
+			}
+			return path.Clean(d)
+		}
+	}
+	return ""
+}
+
+// ExpandSparsePaths maps bare skill names to full git-relative paths.
+// Entries already containing "/" are kept as-is (cleaned); bare names are
+// resolved via FindSkillGitPath when possible.
+func ExpandSparsePaths(ctx context.Context, dir string, wanted []string) []string {
+	var out []string
+	for _, w := range wanted {
+		w = strings.ReplaceAll(w, "\\", "/")
+		w = strings.Trim(w, "/")
+		if w == "" || w == "." {
+			continue
+		}
+		w = path.Clean(w)
+		if !strings.Contains(w, "/") {
+			if full := FindSkillGitPath(ctx, dir, w); full != "" {
+				out = append(out, full)
+				continue
+			}
+		}
+		out = append(out, w)
+	}
+	return dedup(out)
+}
+
+// Materialize ensures gitPaths exist in the working tree, preserving existing
+// sparse rules. It prefers `sparse-checkout add` (union semantics) and falls
+// back to list+set union, then full checkout.
+func Materialize(ctx context.Context, dir string, gitPaths ...string) error {
+	var wanted []string
+	for _, p := range gitPaths {
+		p = strings.ReplaceAll(p, "\\", "/")
+		p = strings.Trim(p, "/")
+		if p == "" || p == "." {
+			continue
+		}
+		wanted = append(wanted, path.Clean(p))
+	}
+	wanted = ExpandSparsePaths(ctx, dir, wanted)
+	if len(wanted) == 0 {
+		return nil
+	}
+	// Fast path: already materialized (SKILL.md present, case-insensitive).
+	allPresent := true
+	for _, rel := range wanted {
+		full := filepath.Join(dir, filepath.FromSlash(rel))
+		if _, err := os.Stat(filepath.Join(full, "SKILL.md")); err != nil {
+			if _, err2 := os.Stat(filepath.Join(full, "skill.md")); err2 != nil {
+				allPresent = false
+				break
+			}
+		}
+	}
+	if allPresent {
+		return nil
+	}
+	// Prefer `add` which unions with existing cone rules.
+	addOK := true
+	for _, rel := range wanted {
+		if out, err := git.Run(ctx, dir, "sparse-checkout", "add", rel); err != nil {
+			if isSparseUnsupported(string(out)) {
+				return nil // old git: full checkout already present
+			}
+			addOK = false
+			break
+		}
+	}
+	if addOK {
+		for _, rel := range wanted {
+			full := filepath.Join(dir, filepath.FromSlash(rel))
+			if _, err := os.Stat(filepath.Join(full, "SKILL.md")); err == nil {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(full, "skill.md")); err == nil {
+				continue
+			}
+			addOK = false
+			break
+		}
+		if addOK {
+			return nil
+		}
+	}
+	// Fallback: union current list + wanted via `set --cone`.
+	cur := []string{}
+	if out, err := git.Run(ctx, dir, "sparse-checkout", "list"); err == nil {
+		for _, l := range strings.Split(string(out), "\n") {
+			if t := strings.TrimSpace(l); t != "" {
+				cur = append(cur, t)
+			}
+		}
+	}
+	union := dedup(append(append([]string{}, cur...), wanted...))
+	if len(union) > 0 {
+		if out, err := git.Run(ctx, dir, append([]string{"sparse-checkout", "set", "--cone"}, union...)...); err == nil {
+			return nil
+		} else if isSparseUnsupported(string(out)) {
+			return nil
+		}
+	}
+	// Last resort: full checkout.
+	_, _ = git.Run(ctx, dir, "sparse-checkout", "disable")
+	_, _ = git.Run(ctx, dir, "read-tree", "-mu", "HEAD")
 	return nil
 }
 
@@ -722,9 +926,9 @@ func GC(paths config.Paths, dryRun bool) ([]string, error) {
 	maxSize := parseSize(maxSizeStr)
 
 	type entry struct {
-		path     string
-		meta     *Meta
-		size     int64
+		path       string
+		meta       *Meta
+		size       int64
 		lastAccess time.Time
 	}
 	var entries []entry

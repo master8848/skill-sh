@@ -84,4 +84,6 @@ func SanitizeSubpath(p string) (string, error) {
 
 type invalidSubpathError struct{ p string }
 
-func (e *invalidSubpathError) Error() string { return "invalid subpath " + `"` + e.p + `"` + `: contains ".."` }
+func (e *invalidSubpathError) Error() string {
+	return "invalid subpath " + `"` + e.p + `"` + `: contains ".."`
+}

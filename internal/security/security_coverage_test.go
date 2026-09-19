@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
-	"skill.sh/mskill/internal/config"
 	"golang.org/x/crypto/bcrypt"
+	"skill.sh/mskill/internal/config"
 )
 
 func TestRequirePassword_FailClosed(t *testing.T) {

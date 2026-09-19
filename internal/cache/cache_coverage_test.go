@@ -15,16 +15,16 @@ import (
 
 func TestParseSize(t *testing.T) {
 	cases := map[string]int64{
-		"2GB":  2 * 1024 * 1024 * 1024,
-		"2gb":  2 * 1024 * 1024 * 1024,
-		"512MB": 512 * 1024 * 1024,
-		"100m": 100 * 1024 * 1024,
-		"10kb": 10 * 1024,
-		"10k":  10 * 1024,
-		"100b": 100,
-		"":     2 * 1024 * 1024 * 1024,
+		"2GB":     2 * 1024 * 1024 * 1024,
+		"2gb":     2 * 1024 * 1024 * 1024,
+		"512MB":   512 * 1024 * 1024,
+		"100m":    100 * 1024 * 1024,
+		"10kb":    10 * 1024,
+		"10k":     10 * 1024,
+		"100b":    100,
+		"":        2 * 1024 * 1024 * 1024,
 		"invalid": 2 * 1024 * 1024 * 1024,
-		"0":    2 * 1024 * 1024 * 1024,
+		"0":       2 * 1024 * 1024 * 1024,
 	}
 	for in, want := range cases {
 		got := parseSize(in)
@@ -35,13 +35,27 @@ func TestParseSize(t *testing.T) {
 }
 
 func TestIsSHA(t *testing.T) {
-	if !isSHA("abc1234") { t.Fatalf("short sha") }
-	if !isSHA("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2") { t.Fatalf("long sha 40 hex") }
-	if isSHA("xyz") { t.Fatalf("xyz not sha") }
-	if isSHA("abc") { t.Fatalf("too short") }
-	if isSHA("") { t.Fatalf("empty should be false") }
-	if isSHA("ggggggg") { t.Fatalf("non-hex") }
-	if isSHA(string(make([]byte, 41))) { t.Fatalf("too long") }
+	if !isSHA("abc1234") {
+		t.Fatalf("short sha")
+	}
+	if !isSHA("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2") {
+		t.Fatalf("long sha 40 hex")
+	}
+	if isSHA("xyz") {
+		t.Fatalf("xyz not sha")
+	}
+	if isSHA("abc") {
+		t.Fatalf("too short")
+	}
+	if isSHA("") {
+		t.Fatalf("empty should be false")
+	}
+	if isSHA("ggggggg") {
+		t.Fatalf("non-hex")
+	}
+	if isSHA(string(make([]byte, 41))) {
+		t.Fatalf("too long")
+	}
 }
 
 func TestMissingPathsAndDedup(t *testing.T) {
