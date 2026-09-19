@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One of every supported note type. Use this as a smoke-test after
+  installing `--release` candidates: if this file imports cleanly,
+  the schema is healthy.
+-->
+<anki deck="AI Import::Reference">
+
+  <!-- 1. Basic -->
+  <note type="Basic" tags="ref basic">
+    <front>What is the powerhouse of the cell?</front>
+    <back>Mitochondrion</back>
+  </note>
+
+  <!-- 2. Basic (and reversed card) — Anki auto-generates the reverse. -->
+  <note type="Basic (and reversed card)" tags="ref reversed">
+    <front>Hola</front>
+    <back>Hello</back>
+  </note>
+
+  <!-- 3. Basic (optional reversed card) — opt-in via <addReverse>. -->
+  <note type="Basic (optional reversed card)" tags="ref opt-reversed">
+    <front>Nepal</front>
+    <back>Kathmandu</back>
+    <addReverse>yes</addReverse>
+    <extra>Capital city</extra>
+  </note>
+
+  <!-- 4. Basic (type in the answer) — back contains the Front wrapped
+       in {{type:Front}}. The CLI does not transform this; Anki does. -->
+  <note type="Basic (type in the answer)" tags="ref typethanswer">
+    <front>Capital of France</front>
+    <back>{{type:Back}}</back>
+  </note>
+
+  <!-- 5. Cloze — one c1 per deletion; multiple cN are allowed. -->
+  <note type="Cloze" tags="ref cloze">
+    <text>The {{c1::mitochondrion}} is the powerhouse of the {{c2::cell}}.</text>
+    <extra>High-yield biology fact.</extra>
+  </note>
+</anki>

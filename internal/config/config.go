@@ -116,6 +116,8 @@ func InitViper(p Paths) error {
 
 	viper.SetDefault("cache.dir", p.CacheDir)
 	viper.SetDefault("cache.ttl", 24*time.Hour)
+	viper.SetDefault("cache.offline", false)
+	viper.SetDefault("offline", false)
 	viper.SetDefault("cache.background_update", true)
 	viper.SetDefault("cache.strategy", "fetch")
 	viper.SetDefault("cache.shallow", true)

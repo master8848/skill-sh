@@ -15,6 +15,11 @@ import (
 var cacheCmd = &cobra.Command{
 	Use:   "cache",
 	Short: "Manage cache",
+	Long:  "Inspect and maintain the sparse-git cache (~/.cache/mskill). Subcommands: list, gc, path, clean.",
+	Example: `  mskill cache list --header | column -t -s $'\t'
+  mskill cache path
+  mskill cache gc --dry-run
+  mskill cache gc`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	},
@@ -23,11 +28,14 @@ var cacheCmd = &cobra.Command{
 var cacheGCCmd = &cobra.Command{
 	Use:   "gc",
 	Short: "Garbage collect expired cache entries",
+	Long:  "Remove stale cache entries by LRU (lastAccess) and max_size. Respects flock .lock.",
+	Example: `  mskill cache gc --dry-run
+  mskill cache gc`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		deleted, err := cache.GC(paths, dryRun)
 		if err != nil {
-			return err
+			return fmt.Errorf("cache gc failed: %w. Tip: check cache dir writable (%s)", err, paths.CacheDir)
 		}
 		if dryRun {
 			if len(deleted) == 0 {
@@ -50,6 +58,8 @@ var cacheGCCmd = &cobra.Command{
 var cachePathCmd = &cobra.Command{
 	Use:   "path",
 	Short: "Print cache and dot directories",
+	Long:  "Print resolved cache, dot, and config paths (honors --cache-dir / --config / env).",
+	Example: `  mskill cache path`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.Println("cache:", paths.CacheDir)
 		cmd.Println("dot:", paths.DotDir)
@@ -61,9 +71,11 @@ var cachePathCmd = &cobra.Command{
 var cacheCleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Remove all cached repos",
+	Long:  "Remove all cached repos under --cache-dir (irreversible). Use 'cache gc' for LRU cleanup instead.",
+	Example: `  mskill cache clean`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := cache.Clean(paths); err != nil {
-			return err
+			return fmt.Errorf("cache clean failed: %w. Tip: check cache dir writable (%s)", err, paths.CacheDir)
 		}
 		cmd.Println("cache cleaned")
 		return nil
@@ -75,10 +87,13 @@ var cacheListCmd = &cobra.Command{
 	Aliases: []string{"ls"},
 	Short:   "List cached repos",
 	Long:    "List all repos currently cached under --cache-dir (default ~/.cache/mskill/repos). Shows source, ref, commit, size, last access, installed status, skills and path. Installed=yes means a symlink in an agent skills dir points into the cache (copy installs show as no).",
+	Example: `  mskill cache list --header | column -t -s $'\t'
+  mskill cache ls
+  mskill cache list --header | cut -f1,6`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entries, err := cache.List(paths)
 		if err != nil {
-			return err
+			return fmt.Errorf("cache list failed: %w. Tip: check cache dir (%s)", err, paths.CacheDir)
 		}
 		if len(entries) == 0 {
 			cmd.Println("no cached repos")

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"skill.sh/mskill/internal/names"
 )
 
 // Resolved represents a parsed skill source.
@@ -53,7 +55,7 @@ func SanitizeSubpath(p string) (string, error) {
 	origParts := strings.Split(p, "/")
 	for _, part := range origParts {
 		if part == ".." {
-			return "", fmt.Errorf("invalid subpath %q: contains \"..\"", p)
+			return "", fmt.Errorf("invalid subpath %q: contains \"..\" — subpath must stay inside skill directory. Tip: use a relative path without \"..\" (e.g., \"skillname\" or \"path/to/skill\")", p)
 		}
 	}
 	cleaned := path.Clean(p)
@@ -62,12 +64,12 @@ func SanitizeSubpath(p string) (string, error) {
 	}
 	// After clean, check for ".." again
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
-		return "", fmt.Errorf("invalid subpath %q: contains \"..\"", p)
+		return "", fmt.Errorf("invalid subpath %q: contains \"..\" — subpath must stay inside skill directory. Tip: use a relative path without \"..\"", p)
 	}
 	parts := strings.Split(cleaned, "/")
 	for _, part := range parts {
 		if part == ".." {
-			return "", fmt.Errorf("invalid subpath %q: contains \"..\"", p)
+			return "", fmt.Errorf("invalid subpath %q: contains \"..\" — subpath must stay inside skill directory", p)
 		}
 	}
 	// Must be inside skill: no absolute
@@ -78,26 +80,73 @@ func SanitizeSubpath(p string) (string, error) {
 	}
 	// final check
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("invalid subpath %q: contains \"..\"", p)
+		return "", fmt.Errorf("invalid subpath %q: contains \"..\" — subpath must stay inside skill directory", p)
 	}
 	return cleaned, nil
 }
 
-// SanitizeName lowercases and replaces [^a-z0-9._] with "-", trims "-".
-func SanitizeName(name string) string {
-	name = strings.ToLower(name)
-	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
+// SanitizeName delegates to internal/names (single source of truth).
+func SanitizeName(name string) string { return names.SanitizeName(name) }
+
+// cloneURL builds https clone URL for host/owner/repo.
+func cloneURL(host, owner, repo string) string {
+	return fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+}
+
+func parseColonPrefix(host, workingInput, atFilter, fragmentRef, orig string) (*Resolved, error) {
+	shortHost := strings.Split(host, ".")[0]
+	prefix := shortHost + ":"
+	// also accept host+":" (e.g. "github.com:") for completeness
+	if !strings.HasPrefix(workingInput, prefix) && !strings.HasPrefix(workingInput, host+":") {
+		return nil, nil
 	}
-	s := b.String()
-	s = strings.Trim(s, "-")
-	// collapse multiple dashes? spec says replace each char with "-", not collapse. Keep as is.
-	return s
+	remainder := workingInput
+	if strings.HasPrefix(remainder, prefix) {
+		remainder = strings.TrimPrefix(remainder, prefix)
+	} else {
+		remainder = strings.TrimPrefix(remainder, host+":")
+	}
+	remainder = strings.TrimPrefix(remainder, "/")
+	remainder = strings.Trim(remainder, "/")
+	remainder = strings.TrimSuffix(remainder, ".git")
+	parts := strings.Split(remainder, "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return nil, nil
+	}
+	owner, repo := parts[0], parts[1]
+	skillPath := ""
+	if len(parts) > 2 {
+		skillPath = strings.Join(parts[2:], "/")
+	}
+	if skillPath == "" && atFilter != "" {
+		skillPath = atFilter
+	}
+	if skillPath != "" {
+		sanitized, err := SanitizeSubpath(skillPath)
+		if err != nil {
+			return nil, err
+		}
+		skillPath = sanitized
+	}
+	slug := ""
+	if skillPath != "" {
+		slug = SanitizeName(path.Base(skillPath))
+	} else if atFilter != "" {
+		slug = SanitizeName(atFilter)
+	}
+	return &Resolved{
+		Host:      host,
+		Owner:     owner,
+		Repo:      repo,
+		SkillPath: skillPath,
+		Subpath:   skillPath,
+		Slug:      slug,
+		Ref:       fragmentRef,
+		CloneURL:  cloneURL(host, owner, repo),
+		Source:    orig,
+		Type:      "git",
+		IsLocal:   false,
+	}, nil
 }
 
 // GetOwnerRepo extracts owner and repo from a source string.
@@ -232,7 +281,7 @@ func isWellKnownUrl(u string) bool { return IsWellKnownUrl(u) }
 func ParseSkillRef(input string) (*Resolved, error) {
 	orig := strings.TrimSpace(input)
 	if orig == "" {
-		return nil, fmt.Errorf("empty skill reference")
+		return nil, fmt.Errorf("empty skill reference: expected owner/repo or owner/repo/skill. Try: mskill get owner/repo --skill <name> --list or mskill search <keywords>")
 	}
 
 	// 1. Local path → Type=local
@@ -317,99 +366,15 @@ func ParseSkillRef(input string) (*Resolved, error) {
 	workingInput = strings.TrimSuffix(workingInput, ".git")
 
 	// 4. github: / gitlab: prefix
-	if strings.HasPrefix(workingInput, "github:") {
-		remainder := strings.TrimPrefix(workingInput, "github:")
-		remainder = strings.TrimPrefix(remainder, "/")
-		remainder = strings.Trim(remainder, "/")
-		remainder = strings.TrimSuffix(remainder, ".git")
-		parts := strings.Split(remainder, "/")
-		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-			owner := parts[0]
-			repo := parts[1]
-			skillPath := ""
-			if len(parts) > 2 {
-				skillPath = strings.Join(parts[2:], "/")
-			}
-			// If skillPath empty and atFilter present, use it
-			if skillPath == "" && atFilter != "" {
-				skillPath = atFilter
-			}
-			// Sanitize subpath
-			if skillPath != "" {
-				sanitized, err := SanitizeSubpath(skillPath)
-				if err != nil {
-					return nil, err
-				}
-				skillPath = sanitized
-			}
-			slug := ""
-			if skillPath != "" {
-				slug = SanitizeName(path.Base(skillPath))
-			} else if atFilter != "" {
-				slug = SanitizeName(atFilter)
-			}
-			subpath := skillPath
-			ref := fragmentRef
-			cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
-			return &Resolved{
-				Host:      "github.com",
-				Owner:     owner,
-				Repo:      repo,
-				SkillPath: skillPath,
-				Subpath:   subpath,
-				Slug:      slug,
-				Ref:       ref,
-				CloneURL:  cloneURL,
-				Source:    orig,
-				Type:      "git",
-				IsLocal:   false,
-			}, nil
-		}
+	if r, err := parseColonPrefix("github.com", workingInput, atFilter, fragmentRef, orig); err != nil {
+		return nil, err
+	} else if r != nil {
+		return r, nil
 	}
-	if strings.HasPrefix(workingInput, "gitlab:") {
-		remainder := strings.TrimPrefix(workingInput, "gitlab:")
-		remainder = strings.TrimPrefix(remainder, "/")
-		remainder = strings.Trim(remainder, "/")
-		remainder = strings.TrimSuffix(remainder, ".git")
-		parts := strings.Split(remainder, "/")
-		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
-			owner := parts[0]
-			repo := parts[1]
-			skillPath := ""
-			if len(parts) > 2 {
-				skillPath = strings.Join(parts[2:], "/")
-			}
-			if skillPath == "" && atFilter != "" {
-				skillPath = atFilter
-			}
-			if skillPath != "" {
-				sanitized, err := SanitizeSubpath(skillPath)
-				if err != nil {
-					return nil, err
-				}
-				skillPath = sanitized
-			}
-			slug := ""
-			if skillPath != "" {
-				slug = SanitizeName(path.Base(skillPath))
-			}
-			subpath := skillPath
-			ref := fragmentRef
-			cloneURL := fmt.Sprintf("https://gitlab.com/%s/%s.git", owner, repo)
-			return &Resolved{
-				Host:      "gitlab.com",
-				Owner:     owner,
-				Repo:      repo,
-				SkillPath: skillPath,
-				Subpath:   subpath,
-				Slug:      slug,
-				Ref:       ref,
-				CloneURL:  cloneURL,
-				Source:    orig,
-				Type:      "git",
-				IsLocal:   false,
-			}, nil
-		}
+	if r, err := parseColonPrefix("gitlab.com", workingInput, atFilter, fragmentRef, orig); err != nil {
+		return nil, err
+	} else if r != nil {
+		return r, nil
 	}
 
 	// 5. Hosted artifact URL
@@ -483,7 +448,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				if sub != "" {
 					slug = SanitizeName(path.Base(sub))
 				}
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				return &Resolved{
 					Host:      host,
 					Owner:     owner,
@@ -513,7 +478,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				if sub != "" {
 					slug = SanitizeName(path.Base(sub))
 				}
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				return &Resolved{
 					Host:      host,
 					Owner:     owner,
@@ -554,7 +519,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				if sub != "" {
 					slug = SanitizeName(path.Base(sub))
 				}
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				return &Resolved{
 					Host:      host,
 					Owner:     owner,
@@ -594,7 +559,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				if sub != "" {
 					slug = SanitizeName(path.Base(sub))
 				}
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				return &Resolved{
 					Host:      host,
 					Owner:     owner,
@@ -624,7 +589,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				if sub != "" {
 					slug = SanitizeName(path.Base(sub))
 				}
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				return &Resolved{
 					Host:      host,
 					Owner:     owner,
@@ -668,7 +633,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 					if sub != "" {
 						slug = SanitizeName(path.Base(sub))
 					}
-					cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+					cloneURL := cloneURL(host, owner, repo)
 					return &Resolved{
 						Host:      host,
 						Owner:     owner,
@@ -699,7 +664,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 					if sub != "" {
 						slug = SanitizeName(path.Base(sub))
 					}
-					cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+					cloneURL := cloneURL(host, owner, repo)
 					return &Resolved{
 						Host:      host,
 						Owner:     owner,
@@ -772,7 +737,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				if sub != "" {
 					slug = SanitizeName(path.Base(sub))
 				}
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				// If no clear owner/repo, treat as Type download or git? Fallback to git
 				return &Resolved{
 					Host:      host,
@@ -832,7 +797,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 				}
 				subpath := skillPath
 				host := ghHost
-				cloneURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+				cloneURL := cloneURL(host, owner, repo)
 				return &Resolved{
 					Host:      host,
 					Owner:     owner,
@@ -873,13 +838,13 @@ func ParseSkillRef(input string) (*Resolved, error) {
 	// Try to extract owner/repo via GetOwnerRepo
 	owner, repo := GetOwnerRepo(workingInput)
 	host := ghHost
-	cloneURL := workingInput
+	outCloneURL := workingInput
 	skillPath := ""
 	subpath := ""
 	slug := ""
 	ref := fragmentRef
 	if owner != "" && repo != "" {
-		cloneURL = fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+		outCloneURL = cloneURL(host, owner, repo)
 		// Try to extract skillPath from parts beyond owner/repo
 		trimmed := strings.Trim(workingInput, "/")
 		parts := strings.Split(trimmed, "/")
@@ -917,7 +882,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 		}
 	} else {
 		// No owner/repo found, treat whole as maybe git URL?
-		cloneURL = workingInput
+		outCloneURL = workingInput
 		if atFilter != "" {
 			skillPath = atFilter
 			subpath = skillPath
@@ -932,7 +897,7 @@ func ParseSkillRef(input string) (*Resolved, error) {
 		Subpath:   subpath,
 		Slug:      slug,
 		Ref:       ref,
-		CloneURL:  cloneURL,
+		CloneURL:  outCloneURL,
 		Source:    orig,
 		Type:      "git",
 		IsLocal:   false,

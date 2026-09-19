@@ -123,19 +123,41 @@ func FilterByTopic(skills []api.Skill, topic string) []api.Skill {
 	if t == "" || t == "all" {
 		return skills
 	}
+	// alias expansion for heuristic when API topic missing: react also matches nextjs etc.
+	topicAliases := map[string][]string{
+		"react":           {"react", "nextjs", "next.js"},
+		"nextjs":          {"nextjs", "react", "next.js"},
+		"design":          {"design", "tailwind", "css"},
+		"mobile":          {"mobile", "react-native", "expo", "flutter"},
+		"agent-workflows": {"agent-workflows", "workflow", "automation"},
+		"databases":       {"databases", "database", "deploy", "docker", "kubernetes", "ci-cd", "ci/cd"},
+		"testing":         {"testing", "jest", "playwright", "e2e"},
+		"marketing":       {"marketing"},
+	}
+	candidates := []string{t}
+	if extra, ok := topicAliases[t]; ok {
+		candidates = extra
+	}
 	var out []api.Skill
 	for _, s := range skills {
 		st := strings.TrimSpace(strings.ToLower(s.Topic))
-		if st == "" {
-			// Heuristic: when API returns no topic, try description/source/name/skillId/id contains topic string
-			hay := strings.ToLower(s.Description + " " + s.Source + " " + s.Name + " " + s.SkillID + " " + s.ID)
-			if strings.Contains(hay, t) {
+		if st != "" {
+			// strict exact match when Topic present (case-insensitive); do not alias here to keep tests deterministic
+			if st == t {
 				out = append(out, s)
 			}
 			continue
 		}
-		if st == t {
-			out = append(out, s)
+		// heuristic when API Topic empty: check description+name+skillId+source+id+topic case-insensitive contains topic (with alias)
+		hay := strings.ToLower(s.Description + " " + s.Source + " " + s.Name + " " + s.SkillID + " " + s.ID + " " + s.Topic)
+		hayNorm := strings.ReplaceAll(strings.ReplaceAll(hay, "-", " "), "_", " ")
+		for _, c := range candidates {
+			cLow := strings.ToLower(c)
+			cNorm := strings.ReplaceAll(strings.ReplaceAll(cLow, "-", " "), "_", " ")
+			if strings.Contains(hay, cLow) || strings.Contains(hayNorm, cNorm) {
+				out = append(out, s)
+				break
+			}
 		}
 	}
 	return out

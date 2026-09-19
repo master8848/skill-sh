@@ -14,6 +14,11 @@ var removeCmd = &cobra.Command{
 	Use:     "remove [skills...]",
 	Aliases: []string{"rm"},
 	Short:   "Remove installed skills",
+	Long:    "Remove linked skills from agent directories (global and/or project). Operates on symlinks/copies created by 'get'.",
+	Example: `  mskill remove anki-import-cli
+  mskill remove --global anki-import-cli
+  mskill remove --agent project anki-import-cli
+  mskill remove skill-a skill-b --global`,
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		globalOnly, _ := cmd.Flags().GetBool("global")

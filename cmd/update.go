@@ -19,8 +19,15 @@ var updateCmd = &cobra.Command{
 	Use:     "update [skills...]",
 	Aliases: []string{"upgrade"},
 	Short:   "Update skills to latest (re-fetch + re-link)",
+	Long:    "Re-fetch from git and re-link. Without args, updates all installed skills. With args, updates named skills (bare slug or owner/repo/skill).",
+	Example: `  mskill update
+  mskill update anki-import-cli --global -y
+  mskill update master8848/Anki-import --skill anki-import-cli --force`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		globalOnly, _ := cmd.Flags().GetBool("global")
 		projectOnly, _ := cmd.Flags().GetBool("project")
 		force, _ := cmd.Flags().GetBool("force")
@@ -101,7 +108,7 @@ var updateCmd = &cobra.Command{
 				// bare slug: resolve via installed lookup
 				resolved, err := findResolvedForBareSlug(raw, globalOnly, projectOnly)
 				if err != nil {
-					return err
+					return fmt.Errorf("cannot resolve %q for update: %w. Tip: try mskill update %s/%s or check installed with mskill list", raw, err, raw, raw)
 				}
 				r = resolved
 			}
@@ -132,30 +139,12 @@ var updateCmd = &cobra.Command{
 			// Determine link opts: respect global/project flags
 			opts := link.InstallOpts{Global: globalOnly, Project: projectOnly, Copy: false}
 			if err := link.Install(cacheSkillPath, skillName, opts); err != nil {
-				return err
+				return fmt.Errorf("link %q to target failed: %w. Tip: check destination writable or try --copy", skillName, err)
 			}
 			cmd.Printf("updated %s (%s)\n", raw, cachePath)
 		}
 		return nil
 	},
-}
-
-func expandHomeUpdate(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			return filepath.Join(home, p[2:])
-		}
-		return p[2:]
-	}
-	if p == "~" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			return home
-		}
-		return p
-	}
-	return p
 }
 
 func installedSkillNames(globalOnly, projectOnly bool) []string {
@@ -181,7 +170,7 @@ func installedSkillNames(globalOnly, projectOnly bool) []string {
 			doProject = true
 		}
 		if doGlobal {
-			g := expandHomeUpdate(ag.GlobalDir)
+			g := expandHome(ag.GlobalDir)
 			if g != "" {
 				dirs = append(dirs, g)
 			}
@@ -189,7 +178,7 @@ func installedSkillNames(globalOnly, projectOnly bool) []string {
 		if doProject {
 			p := ag.ProjectDir
 			if filepath.IsAbs(p) {
-				p = expandHomeUpdate(p)
+				p = expandHome(p)
 			} else {
 				wd, _ := os.Getwd()
 				p = filepath.Join(wd, p)
@@ -249,7 +238,7 @@ func findResolvedForBareSlug(slug string, globalOnly, projectOnly bool) (*resolv
 			doProject = true
 		}
 		if doGlobal {
-			g := expandHomeUpdate(ag.GlobalDir)
+			g := expandHome(ag.GlobalDir)
 			if g != "" {
 				dirs = append(dirs, g)
 			}
@@ -257,7 +246,7 @@ func findResolvedForBareSlug(slug string, globalOnly, projectOnly bool) (*resolv
 		if doProject {
 			p := ag.ProjectDir
 			if filepath.IsAbs(p) {
-				p = expandHomeUpdate(p)
+				p = expandHome(p)
 			} else {
 				wd, _ := os.Getwd()
 				p = filepath.Join(wd, p)

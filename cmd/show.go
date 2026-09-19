@@ -39,36 +39,26 @@ func stripYAMLFrontmatter(s string) string {
 	return s
 }
 
-func normalizeColonRef(raw string) string {
-	if resolve.IsLocalPath(raw) {
-		return raw
-	}
-	if strings.Contains(raw, "://") {
-		return raw
-	}
-	if strings.HasPrefix(raw, "github:") || strings.HasPrefix(raw, "gitlab:") {
-		return raw
-	}
-	idx := strings.Index(raw, ":")
-	if idx == -1 {
-		return raw
-	}
-	prefix := raw[:idx]
-	if !strings.Contains(prefix, "/") {
-		return raw
-	}
-	// replace first ":" with "/"
-	return prefix + "/" + raw[idx+1:]
-}
-
 var showCmd = &cobra.Command{
 	Use:     "show [skill]",
 	Aliases: []string{"cat"},
 	Short:   "Show cached skill without linking",
-	Long:    "Resolve → Cache → cat skill contents. Same security gate as get, no link step. Supports --file and --list for auxiliary files.",
+	Long: `Resolve → Cache → cat — view a skill without linking.
+
+Same Resolve → Cache path as 'get' (sparse git + audit gate), but stops
+before Link and prints files to stdout. Useful for inspection.
+
+Supports --file for auxiliary files and --list to explore.`,
+	Example: `  mskill show master8848/Anki-import --skill anki-import-cli
+  mskill show master8848/Anki-import --skill anki-import-cli --file README.md --file scripts/setup.sh
+  mskill show master8848/Anki-import --skill anki-import-cli --list
+  mskill show vercel-labs/agent-skills/vercel-optimize --ref v1.2.0 --file SKILL.md`,
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		// support --skill filter like `get` for UX: `show owner/repo --skill docs`
 		var skillFilters []string
 		if vals, err := cmd.Flags().GetStringArray("skill"); err == nil && len(vals) > 0 {
@@ -112,7 +102,13 @@ var showCmd = &cobra.Command{
 
 		r, err := resolve.ParseSkillRef(raw)
 		if err != nil {
-			return fmt.Errorf("resolve %q: %w", raw, err)
+			if strings.Contains(err.Error(), "empty skill reference") {
+				return fmt.Errorf("Cannot resolve %q: empty skill reference. Try: mskill show owner/repo/skill or mskill show owner/repo --skill <name> --list (%w)", raw, err)
+			}
+			if strings.Contains(err.Error(), "invalid subpath") {
+				return fmt.Errorf("Cannot resolve %q: %v. Tip: subpath cannot contain \"..\" (%w)", raw, err, err)
+			}
+			return fmt.Errorf("Cannot resolve %q: %v. Try: mskill show owner/repo --help or mskill show owner/repo --list\nTip: check spelling (%w)", raw, err, err)
 		}
 		if verbose {
 			fmt.Fprintf(os.Stderr, "resolve: %+v\n", r)
@@ -127,7 +123,7 @@ var showCmd = &cobra.Command{
 				} else if discovered := discoverSkillInCache(base, filepath.Base(localPath)); discovered != "" {
 					localPath = discovered
 				} else {
-					return fmt.Errorf("local skill %q not found (checked %q)", r.Slug, r.CloneURL)
+					return fmt.Errorf("local skill %q not found (checked %q). Tip: mskill show %q --list to see available or check path exists", r.Slug, r.CloneURL, base)
 				}
 			} else if _, err := os.Stat(filepath.Join(localPath, "SKILL.md")); err != nil && r.Slug != "" {
 				if discovered := discoverSkillInCache(localPath, r.Slug); discovered != "" {
@@ -137,11 +133,12 @@ var showCmd = &cobra.Command{
 			if list {
 				entries, err := os.ReadDir(localPath)
 				if err != nil {
-					return err
+					return fmt.Errorf("list %q: %w. Tip: check path exists or try mskill show %s --list", localPath, err, r.CloneURL)
 				}
 				for _, e := range entries {
 					cmdPrint(cmd, e.Name()+"\n")
 				}
+				cmdPrint(cmd, fmt.Sprintf("\n---\nskill dir: %s\n", localPath))
 				return nil
 			}
 			targetFiles := files
@@ -152,16 +149,16 @@ var showCmd = &cobra.Command{
 				f = strings.ReplaceAll(f, "\\", "/")
 				sanitized, err := resolve.SanitizeSubpath(f)
 				if err != nil {
-					return err
+					return fmt.Errorf("invalid --file %q: %v. Tip: file cannot contain \"..\" (%w)", f, err, err)
 				}
 				full := filepath.Join(localPath, sanitized)
 				rel, err := filepath.Rel(localPath, full)
 				if err != nil || strings.HasPrefix(rel, "..") {
-					return fmt.Errorf("file %q outside skill directory", f)
+					return fmt.Errorf("file %q outside skill directory (traversal not allowed)", f)
 				}
 				data, err := os.ReadFile(full)
 				if err != nil {
-					return fmt.Errorf("read %s: %w", f, err)
+					return fmt.Errorf("read %s at %q: %w. Tip: try mskill show %s --list to see files", f, full, err, localPath)
 				}
 				out := string(data)
 				if strings.EqualFold(filepath.Base(sanitized), "SKILL.md") {
@@ -172,6 +169,7 @@ var showCmd = &cobra.Command{
 					cmdPrint(cmd, "\n")
 				}
 			}
+			cmdPrint(cmd, fmt.Sprintf("\n---\nskill dir: %s\n", localPath))
 			return nil
 		}
 
@@ -204,7 +202,7 @@ var showCmd = &cobra.Command{
 				if !v.Safe || v.Unknown {
 					if !security.IsTrustEnabled(paths) {
 						if err := security.RequirePassword(slugForAudit, v.Reason, paths); err != nil {
-							return err
+							return fmt.Errorf("security gate for %q: %w", slugForAudit, err)
 						}
 					}
 				}
@@ -213,17 +211,94 @@ var showCmd = &cobra.Command{
 
 		cachePath, _, err := cache.Ensure(ctx, paths, r, effectiveRef, skillPaths, force)
 		if err != nil {
-			return fmt.Errorf("cache %q: %w", raw, err)
+			return fmt.Errorf("Cannot cache %q at ref %q: %v. Tip: try --ref main or check repo exists and --ref valid (%w)", raw, effectiveRef, err, err)
+		}
+
+		// Ensure sparse checkout is materialized for a given skill rel path.
+		ensureSkillMaterialized := func(rel string) {
+			if rel == "" {
+				return
+			}
+			full := filepath.Join(cachePath, rel)
+			if hasSkillMD(full) {
+				return
+			}
+			// Try to materialize via Ensure with that sparse path; ignore error fallback to git sparse-checkout
+			if np, _, err := cache.Ensure(ctx, paths, r, effectiveRef, []string{rel}, force); err == nil {
+				cachePath = np
+				return
+			}
+			// Fallback: try git sparse-checkout directly
+			if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(rel)); gitPath != "" {
+				_ = resolveShowSkillViaGit(ctx, cachePath, gitPath)
+			} else {
+				_, _ = git.Run(ctx, cachePath, "sparse-checkout", "set", "--cone", rel)
+			}
 		}
 
 		baseSkillDir := cachePath
-		if r.SkillPath != "" {
+		// Repo-level reference without explicit skill: discover and handle gracefully
+		if r.SkillPath == "" && r.Slug == "" {
+			// If root contains SKILL.md, treat as single root skill
+			if hasSkillMD(cachePath) {
+				baseSkillDir = cachePath
+			} else {
+				skills, _ := cache.ListSkills(ctx, cachePath)
+				// If cache is broken/empty (no skills but repo should have skills), try force refresh once: ensure with nil sparse paths to repopulate tree
+				if len(skills) == 0 {
+					if np, _, ferr := cache.Ensure(ctx, paths, r, effectiveRef, nil, true); ferr == nil {
+						cachePath = np
+						skills, _ = cache.ListSkills(ctx, cachePath)
+					}
+				}
+				if len(skills) == 0 {
+					return fmt.Errorf("no skills found in %s/%s (missing SKILL.md). Try: mskill show %s/%s --skill <name> or --list\nTip: verify repo contains SKILL.md or check --ref", r.Owner, r.Repo, r.Owner, r.Repo)
+				}
+				if len(skills) == 1 {
+					sel := skills[0]
+					if sel == "" {
+						baseSkillDir = cachePath
+					} else {
+						ensureSkillMaterialized(sel)
+						candidate := filepath.Join(cachePath, sel)
+						if hasSkillMD(candidate) {
+							baseSkillDir = candidate
+						} else if discovered := discoverSkillInCache(cachePath, filepath.Base(sel)); discovered != "" {
+							baseSkillDir = discovered
+						} else if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(sel)); gitPath != "" {
+							baseSkillDir = resolveShowSkillViaGit(ctx, cachePath, gitPath)
+						} else {
+							baseSkillDir = candidate
+						}
+					}
+				} else {
+					// Multiple skills: if --list, show available skills instead of error
+					if list {
+						for _, s := range skills {
+							disp := s
+							if disp == "" {
+								disp = "."
+							}
+							cmdPrint(cmd, disp+"\n")
+						}
+						cmdPrint(cmd, fmt.Sprintf("\n---\ncached at: %s\n", cachePath))
+						return nil
+					}
+					// Multiple skills: require explicit --skill - do NOT try to read SKILL.md from cachePath root
+					display := allDisplay(skills)
+					return fmt.Errorf("repo %s/%s contains %d skills; use --skill <name> (repeatable), --skill \"*\" for all, or --list to discover. Available: %s\nTip: mskill show %s/%s --skill \"*\" --file SKILL.md to see all, or mskill get %s/%s --skill \"*\" -y to install\nExample: mskill show %s/%s --skill %s --file SKILL.md", r.Owner, r.Repo, len(skills), strings.Join(display, ", "), r.Owner, r.Repo, r.Owner, r.Repo, r.Owner, r.Repo, display[0])
+				}
+			}
+		} else if r.SkillPath != "" {
 			candidate := filepath.Join(cachePath, r.SkillPath)
-			if _, err := os.Stat(candidate); err == nil {
+			if _, err := os.Stat(candidate); err == nil && hasSkillMD(candidate) {
 				baseSkillDir = candidate
 			} else {
-				// nested skill like engineering/skills/documentation with slug "documentation"
-				if discovered := discoverSkillInCache(cachePath, filepath.Base(r.SkillPath)); discovered != "" {
+				// Ensure materialized if missing
+				ensureSkillMaterialized(r.SkillPath)
+				if _, err := os.Stat(candidate); err == nil && hasSkillMD(candidate) {
+					baseSkillDir = candidate
+				} else if discovered := discoverSkillInCache(cachePath, filepath.Base(r.SkillPath)); discovered != "" {
 					baseSkillDir = discovered
 				} else if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(r.SkillPath)); gitPath != "" {
 					baseSkillDir = resolveShowSkillViaGit(ctx, cachePath, gitPath)
@@ -234,10 +309,13 @@ var showCmd = &cobra.Command{
 			}
 		} else if r.Slug != "" {
 			candidate := filepath.Join(cachePath, r.Slug)
-			if _, err := os.Stat(candidate); err == nil {
+			if _, err := os.Stat(candidate); err == nil && hasSkillMD(candidate) {
 				baseSkillDir = candidate
 			} else {
-				if discovered := discoverSkillInCache(cachePath, r.Slug); discovered != "" {
+				ensureSkillMaterialized(r.Slug)
+				if _, err := os.Stat(candidate); err == nil && hasSkillMD(candidate) {
+					baseSkillDir = candidate
+				} else if discovered := discoverSkillInCache(cachePath, r.Slug); discovered != "" {
 					baseSkillDir = discovered
 				} else if gitPath := discoverSkillViaGit(ctx, cachePath, r.Slug); gitPath != "" {
 					baseSkillDir = resolveShowSkillViaGit(ctx, cachePath, gitPath)
@@ -245,17 +323,34 @@ var showCmd = &cobra.Command{
 			}
 		}
 		// If baseSkillDir still missing or lacking SKILL.md, try any discovery
-		if _, err := os.Stat(filepath.Join(baseSkillDir, "SKILL.md")); err != nil {
-			if discovered := discoverSkillInCache(cachePath, r.Slug); discovered != "" {
-				baseSkillDir = discovered
-			} else if r.Slug != "" {
-				if gitPath := discoverSkillViaGit(ctx, cachePath, r.Slug); gitPath != "" {
+		if !hasSkillMD(baseSkillDir) {
+			if r.Slug != "" {
+				if discovered := discoverSkillInCache(cachePath, r.Slug); discovered != "" {
+					baseSkillDir = discovered
+				} else if gitPath := discoverSkillViaGit(ctx, cachePath, r.Slug); gitPath != "" {
 					baseSkillDir = resolveShowSkillViaGit(ctx, cachePath, gitPath)
 				}
+			} else if r.SkillPath != "" {
+				if discovered := discoverSkillInCache(cachePath, filepath.Base(r.SkillPath)); discovered != "" {
+					baseSkillDir = discovered
+				} else if gitPath := discoverSkillViaGit(ctx, cachePath, filepath.Base(r.SkillPath)); gitPath != "" {
+					baseSkillDir = resolveShowSkillViaGit(ctx, cachePath, gitPath)
+				}
+			} else {
+				// repo-level single skill fallback: discover any
+				if discovered := discoverSkillInCache(cachePath, ""); discovered != "" && hasSkillMD(discovered) {
+					baseSkillDir = discovered
+				} else if any := discoverAnySkill(cachePath); any != "" {
+					baseSkillDir = any
+				}
 			}
-			if _, err := os.Stat(filepath.Join(baseSkillDir, "SKILL.md")); err != nil {
+			if !hasSkillMD(baseSkillDir) {
 				if r.SkillPath != "" {
-					return fmt.Errorf("skill %q not found at ref %q in %s (checked %q). Try mskill get %s/%s --skill * or verify skill path", r.Slug, effectiveRef, cachePath, baseSkillDir, r.Owner, r.Repo)
+					return fmt.Errorf("skill %q not found at ref %q in %s (checked %q). Try: mskill show %s/%s --skill \"*\" --list to discover, or mskill get %s/%s --skill \"*\" --ref %q\nTip: verify skill path exists at that ref", r.Slug, effectiveRef, cachePath, baseSkillDir, r.Owner, r.Repo, r.Owner, r.Repo, effectiveRef)
+				}
+				if r.Slug == "" && r.SkillPath == "" {
+					// repo-level already handled; but if still missing, provide generic
+					return fmt.Errorf("skill not found at ref %q in %s (checked %q). Try: mskill show %s/%s --list or mskill get %s/%s --skill \"*\" --ref %q", effectiveRef, cachePath, baseSkillDir, r.Owner, r.Repo, r.Owner, r.Repo, effectiveRef)
 				}
 			}
 		}
@@ -263,11 +358,13 @@ var showCmd = &cobra.Command{
 		if list {
 			entries, err := os.ReadDir(baseSkillDir)
 			if err != nil {
-				return err
+				return fmt.Errorf("list %q: %w. Tip: check path exists or try mskill show %s --list", baseSkillDir, err, raw)
 			}
 			for _, e := range entries {
 				cmdPrint(cmd, e.Name()+"\n")
 			}
+			// footer: show where skill lives (cache + skill dir), useful when skill has other files
+			cmdPrint(cmd, fmt.Sprintf("\n---\nskill: %s\ncached at: %s\nskill dir: %s\nlist: ls %s\n", slugForAudit, cachePath, baseSkillDir, baseSkillDir))
 			return nil
 		}
 
@@ -279,16 +376,16 @@ var showCmd = &cobra.Command{
 			f = strings.ReplaceAll(f, "\\", "/")
 			sanitized, err := resolve.SanitizeSubpath(f)
 			if err != nil {
-				return fmt.Errorf("invalid --file %q: %w", f, err)
+				return fmt.Errorf("invalid --file %q: %v. Tip: file cannot contain \"..\" (%w)", f, err, err)
 			}
 			full := filepath.Join(baseSkillDir, sanitized)
 			rel, err := filepath.Rel(baseSkillDir, full)
 			if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, ".."+string(os.PathSeparator)) {
-				return fmt.Errorf("file %q outside skill directory", f)
+				return fmt.Errorf("file %q outside skill directory (traversal not allowed)", f)
 			}
 			data, err := os.ReadFile(full)
 			if err != nil {
-				return fmt.Errorf("read %s: %w", f, err)
+				return fmt.Errorf("read %s at %q: %w. Tip: try mskill show %s --list to see files", f, full, err, raw)
 			}
 			out := string(data)
 			if strings.EqualFold(filepath.Base(sanitized), "SKILL.md") {
@@ -299,6 +396,12 @@ var showCmd = &cobra.Command{
 				cmdPrint(cmd, "\n")
 			}
 		}
+		// footer: location where skill is cached/installed (helps explore other files)
+		cmdPrint(cmd, fmt.Sprintf("\n---\nskill: %s\ncached at: %s\nskill dir: %s\n", slugForAudit, cachePath, baseSkillDir))
+		if verbose {
+			cmdPrint(cmd, fmt.Sprintf("ref: %s\n", effectiveRef))
+		}
+		cmdPrint(cmd, fmt.Sprintf("explore: ls %s  |  mskill show %s --list\n", baseSkillDir, raw))
 		return nil
 	},
 }
@@ -331,4 +434,5 @@ func init() {
 	showCmd.Flags().Bool("force", false, "force cache refresh")
 	showCmd.Flags().StringArray("skill", []string{}, "filter skill from repo (for show owner/repo --skill name)")
 	showCmd.Flags().String("skill-compat", "", "compat single skill filter")
+	_ = showCmd.Flags().MarkHidden("skill-compat")
 }

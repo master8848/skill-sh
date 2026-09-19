@@ -221,7 +221,9 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 	exists := err == nil && existingMeta != nil
 
 	// Check for corrupt .git early if cachePath exists but meta missing? We'll handle inside lock.
-	if exists && !force {
+	// Default is auto-fetch (cheap `git fetch --depth 1`); only use TTL-gated cache when --offline/--cache is set.
+	offline := viper.GetBool("offline") || viper.GetBool("cache.offline") || viper.GetBool("cache") || viper.GetBool("use-cache") || viper.GetBool("cache.use_cache")
+	if exists && !force && offline {
 		ttl := viper.GetDuration("cache.ttl")
 		if ttl == 0 {
 			ttl = 24 * time.Hour
@@ -250,30 +252,19 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 				} else {
 					_ = out
 					allPaths := dedup(append(append([]string{}, existingMeta.SparsePaths...), missing...))
-					// filter empty
-					filtered := []string{}
-					for _, p := range allPaths {
-						if p != "" {
-							filtered = append(filtered, p)
-						}
-					}
-					if len(filtered) > 0 {
+					if len(allPaths) > 0 {
 						expErr := withLock(cachePath, func() error {
-							args := []string{"sparse-checkout", "set", "--cone"}
-							args = append(args, filtered...)
-							out2, err2 := git.Run(ctx, cachePath, args...)
-							if err2 != nil {
-								s := string(out2)
-								if strings.Contains(s, "unknown option") || strings.Contains(s, "sparse-checkout") && strings.Contains(strings.ToLower(s), "unknown") {
+							if err := applySparseCheckout(ctx, cachePath, allPaths); err != nil {
+								if isSparseUnsupported(err.Error()) {
 									fmt.Fprintf(os.Stderr, "warning: sparse-checkout unsupported, using full checkout\n")
 									return nil
 								}
-								return fmt.Errorf("sparse-checkout set failed: %w: %s", err2, s)
+								return err
 							}
 							return nil
 						})
 						if expErr == nil {
-							existingMeta.SparsePaths = filtered
+							existingMeta.SparsePaths = allPaths
 							existingMeta.LastAccess = time.Now()
 							_ = SaveMeta(metaPath, existingMeta)
 							return cachePath, existingMeta, nil
@@ -338,21 +329,13 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 						missing := missingPaths(skillPaths, m.SparsePaths)
 						if len(missing) > 0 {
 							allPaths := dedup(append(append([]string{}, m.SparsePaths...), missing...))
-							filtered := []string{}
-							for _, p := range allPaths {
-								if p != "" {
-									filtered = append(filtered, p)
-								}
-							}
-							if len(filtered) > 0 {
-								args := []string{"sparse-checkout", "set", "--cone"}
-								args = append(args, filtered...)
-								if out2, err2 := git.Run(ctx, cachePath, args...); err2 != nil {
-									if strings.Contains(string(out2), "unknown") {
+							if len(allPaths) > 0 {
+								if err := applySparseCheckout(ctx, cachePath, allPaths); err != nil {
+									if isSparseUnsupported(err.Error()) {
 										fmt.Fprintf(os.Stderr, "warning: sparse-checkout unsupported, using full checkout\n")
 									}
 								} else {
-									m.SparsePaths = filtered
+									m.SparsePaths = allPaths
 								}
 							}
 						}
@@ -379,25 +362,16 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 				missing := missingPaths(skillPaths, basePaths)
 				if len(missing) > 0 {
 					allPaths := dedup(append(append([]string{}, basePaths...), missing...))
-					filtered := []string{}
-					for _, p := range allPaths {
-						if p != "" {
-							filtered = append(filtered, p)
-						}
-					}
-					if len(filtered) > 0 {
-						args := []string{"sparse-checkout", "set", "--cone"}
-						args = append(args, filtered...)
-						if out3, err3 := git.Run(ctx, cachePath, args...); err3 != nil {
-							s := string(out3)
-							if strings.Contains(s, "unknown") {
+					if len(allPaths) > 0 {
+						if err := applySparseCheckout(ctx, cachePath, allPaths); err != nil {
+							if isSparseUnsupported(err.Error()) {
 								fmt.Fprintf(os.Stderr, "warning: sparse-checkout unsupported, using full checkout\n")
 							} else {
-								return fmt.Errorf("sparse-checkout set failed: %w: %s", err3, s)
+								return err
 							}
 						} else {
 							if hasMeta {
-								m.SparsePaths = filtered
+								m.SparsePaths = allPaths
 							}
 						}
 					}
@@ -579,24 +553,11 @@ func Ensure(ctx context.Context, paths config.Paths, resolved *resolve.Resolved,
 
 		// Sparse-checkout set
 		if len(skillPaths) > 0 {
-			filtered := []string{}
-			for _, p := range skillPaths {
-				if p != "" {
-					filtered = append(filtered, p)
-				}
-			}
-			if len(filtered) > 0 {
-				args := []string{"sparse-checkout", "set", "--cone"}
-				args = append(args, filtered...)
-				if out6, err6 := git.Run(ctx, tmpDir, args...); err6 != nil {
-					s := string(out6)
-					if strings.Contains(s, "unknown") {
-						fmt.Fprintf(os.Stderr, "warning: sparse-checkout unsupported, using full checkout\n")
-					} else {
-						// Non-critical? but return error if path not found?
-						// If path not in repo, git will error; treat as non-fatal? But spec says "skill not found at ref"
-						return fmt.Errorf("sparse-checkout set failed: %w: %s", err6, s)
-					}
+			if err := applySparseCheckout(ctx, tmpDir, skillPaths); err != nil {
+				if isSparseUnsupported(err.Error()) {
+					fmt.Fprintf(os.Stderr, "warning: sparse-checkout unsupported, using full checkout\n")
+				} else {
+					return err
 				}
 			}
 		}
@@ -709,6 +670,22 @@ func dedup(in []string) []string {
 		}
 	}
 	return out
+}
+
+func isSparseUnsupported(out string) bool {
+	return strings.Contains(strings.ToLower(out), "unknown")
+}
+
+func applySparseCheckout(ctx context.Context, dir string, paths []string) error {
+	filtered := dedup(paths)
+	if len(filtered) == 0 {
+		return nil
+	}
+	out, err := git.Run(ctx, dir, append([]string{"sparse-checkout", "set", "--cone"}, filtered...)...)
+	if err != nil {
+		return fmt.Errorf("sparse-checkout set failed: %w: %s", err, string(out))
+	}
+	return nil
 }
 
 // GC scans repos and removes expired or LRU entries.

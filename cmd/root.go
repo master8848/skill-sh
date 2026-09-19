@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -21,7 +23,19 @@ var (
 var rootCmd = &cobra.Command{
 	Use:           "mskill",
 	Short:         "Fetch → Store → Link skill manager",
-	Long:          "mskill is a Go-native replacement for npx skills — Resolve → Cache → Link with sparse git, fail-closed security, and human-gated trust.",
+	Long: `mskill — Fetch → Store → Link skill manager.
+
+A Go-native replacement for npx skills.sh — Resolve → Cache → Link with
+sparse git, content-addressed cache, and human-gated trust (fail-closed).
+
+Anki-import example:
+  mskill get master8848/Anki-import --skill anki-import-cli --project
+  mskill get master8848/Anki-import/ --project --yes
+
+First time? Try: mskill search anki --limit 5 --header`,
+	Example: `  mskill get master8848/Anki-import --skill anki-import-cli --project
+  mskill search anki --limit 5 --header | column -t -s $'\t'
+  mskill show master8848/Anki-import --skill anki-import-cli --list`,
 	SilenceUsage:  true,
 	SilenceErrors: false,
 	Version:       version,
@@ -74,9 +88,11 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// Execute is entrypoint from main.go.
+// Execute is entrypoint from main.go. Handles SIGINT gracefully via signal-aware context.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
@@ -95,8 +111,28 @@ func init() {
 	if f := rootCmd.PersistentFlags().Lookup("yes"); f != nil {
 		_ = viper.BindPFlag("yes", f)
 	}
+	// --offline / --cache: when set, reuse cached copy without network fetch (TTL-gated). Default is auto-fetch.
+	if rootCmd.PersistentFlags().Lookup("offline") == nil {
+		rootCmd.PersistentFlags().Bool("offline", false, "use cached copy without fetching (offline mode)")
+		_ = viper.BindPFlag("offline", rootCmd.PersistentFlags().Lookup("offline"))
+	}
+	if rootCmd.PersistentFlags().Lookup("cache") == nil {
+		rootCmd.PersistentFlags().Bool("cache", false, "alias for --offline: use cached copy")
+		_ = viper.BindPFlag("cache", rootCmd.PersistentFlags().Lookup("cache"))
+	}
+	if rootCmd.PersistentFlags().Lookup("use-cache") == nil {
+		rootCmd.PersistentFlags().Bool("use-cache", false, "alias for --offline")
+		_ = viper.BindPFlag("cache.offline", rootCmd.PersistentFlags().Lookup("use-cache"))
+	}
+	// bind offline also to cache.offline for viper key consistency
+	if f := rootCmd.PersistentFlags().Lookup("offline"); f != nil {
+		_ = viper.BindPFlag("cache.offline", f)
+	}
 
 	viper.SetEnvPrefix("MSKILL")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+
+	// Consistent version output: "mskill <version>" for both --version and `mskill version`
+	rootCmd.SetVersionTemplate("mskill {{.Version}}\n")
 }

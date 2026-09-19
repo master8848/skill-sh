@@ -11,67 +11,14 @@ import (
 
 	"github.com/spf13/viper"
 	"skill.sh/mskill/internal/cache"
-	"skill.sh/mskill/internal/config"
 	"skill.sh/mskill/internal/link"
 	"skill.sh/mskill/internal/resolve"
+	"skill.sh/mskill/internal/testutil"
 )
 
-// helper: create temp git repo with skills
-func initGitRepo(t *testing.T, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	// git init
-	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v %s", err, out)
-	}
-	// config
-	_ = exec.Command("git", "-C", dir, "config", "user.email", "test@test.com").Run()
-	_ = exec.Command("git", "-C", dir, "config", "user.name", "test").Run()
-	for rel, content := range files {
-		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
-	_ = exec.Command("git", "-C", dir, "add", ".").Run()
-	if out, err := exec.Command("git", "-C", dir, "commit", "-m", "init").CombinedOutput(); err != nil {
-		t.Fatalf("git commit: %v %s", err, out)
-	}
-	return dir
-}
-
-func tempPaths(t *testing.T) config.Paths {
-	t.Helper()
-	dot := filepath.Join(t.TempDir(), ".mskill")
-	cacheDir := filepath.Join(t.TempDir(), "cache")
-	t.Setenv("MSKILL_DOT_DIR", dot)
-	t.Setenv("MSKILL_CACHE_DIR", cacheDir)
-	t.Setenv("MSKILL_CONFIG", filepath.Join(dot, "config.yaml"))
-	// also clear XDG
-	t.Setenv("XDG_CACHE_HOME", "")
-	t.Setenv("XDG_CONFIG_HOME", "")
-	viper.Reset()
-	p, err := config.ResolvePaths()
-	if err != nil {
-		t.Fatalf("ResolvePaths: %v", err)
-	}
-	if err := config.EnsureDirs(p); err != nil {
-		t.Fatalf("EnsureDirs: %v", err)
-	}
-	if err := config.InitViper(p); err != nil {
-		t.Fatalf("InitViper: %v", err)
-	}
-	// reduce TTL for tests
-	viper.Set("cache.ttl", 1*time.Hour)
-	return p
-}
-
 func TestFetchStoreLink_SparseAndTTL(t *testing.T) {
-	paths := tempPaths(t)
-	repoDir := initGitRepo(t, map[string]string{
+	paths := testutil.TempPaths(t)
+	repoDir := testutil.InitGitRepo(t, "", map[string]string{
 		"my-skill/SKILL.md":        "# My Skill\nhello",
 		"my-skill/README.md":       "readme",
 		"other-skill/SKILL.md":     "# Other",
@@ -145,8 +92,8 @@ func TestFetchStoreLink_SparseAndTTL(t *testing.T) {
 }
 
 func TestFetchStoreLink_IncrementalUpdateAndLinkSymlink(t *testing.T) {
-	paths := tempPaths(t)
-	repoDir := initGitRepo(t, map[string]string{
+	paths := testutil.TempPaths(t)
+	repoDir := testutil.InitGitRepo(t, "", map[string]string{
 		"my-skill/SKILL.md": "# v1",
 	})
 	r, _ := resolve.ParseSkillRef("owner/repo/my-skill")
@@ -229,9 +176,9 @@ func TestFetchStoreLink_IncrementalUpdateAndLinkSymlink(t *testing.T) {
 }
 
 func TestCacheGCRemovesExpiredAndPreservesFresh(t *testing.T) {
-	paths := tempPaths(t)
+	paths := testutil.TempPaths(t)
 	// create two entries: old and fresh
-	repoDir := initGitRepo(t, map[string]string{"skill/SKILL.md": "hi"})
+	repoDir := testutil.InitGitRepo(t, "", map[string]string{"skill/SKILL.md": "hi"})
 	rOld, _ := resolve.ParseSkillRef("owner/repo-old/skill")
 	rOld.CloneURL = repoDir
 	rOld.Host = "github.com"
@@ -298,7 +245,7 @@ func TestCacheGCRemovesExpiredAndPreservesFresh(t *testing.T) {
 }
 
 func TestListAndRemoveFlow(t *testing.T) {
-	paths := tempPaths(t)
+	paths := testutil.TempPaths(t)
 	_ = paths
 	home := t.TempDir()
 	t.Setenv("HOME", home)

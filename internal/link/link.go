@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"skill.sh/mskill/internal/names"
 )
 
 // Agent describes per-agent skill directories.
@@ -54,40 +55,8 @@ type InstallOpts struct {
 	DryRun   bool
 }
 
-// SanitizeName lowercases and replaces [^a-z0-9._] with "-", trims "-".
-func SanitizeName(name string) string {
-	name = strings.ToLower(name)
-	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	s := b.String()
-	s = strings.Trim(s, "-")
-	return s
-}
-
-func expandHome(p string) string {
-	// Handle both Unix "~/..." and Windows "~\\..." prefixes.
-	if len(p) >= 2 && p[0] == '~' && (p[1] == '/' || p[1] == '\\') {
-		home, _ := os.UserHomeDir()
-		if home == "" {
-			return p[2:]
-		}
-		return filepath.Join(home, p[2:])
-	}
-	if p == "~" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			return home
-		}
-		return p
-	}
-	return p
-}
+// SanitizeName delegates to internal/names (single source of truth).
+func SanitizeName(name string) string { return names.SanitizeName(name) }
 
 // ResolveDestinations parses agentFilter comma-separated, "*" => all, "" => default from viper.
 func ResolveDestinations(agentFilter string, globalOnly, projectOnly bool) []Agent {
@@ -519,7 +488,7 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 			doProject = true
 		}
 		if doGlobal {
-			g := expandHome(ag.GlobalDir)
+			g := names.ExpandHome(ag.GlobalDir)
 			if g != "" {
 				targets = append(targets, filepath.Join(g, sanitized))
 			}
@@ -529,7 +498,7 @@ func Install(cacheSkillPath, skillName string, opts InstallOpts) error {
 			// ProjectDir is relative to cwd
 			if filepath.IsAbs(p) {
 				// expand home if needed
-				p = expandHome(p)
+				p = names.ExpandHome(p)
 			}
 			// For project, join with current working dir via filepath.Join (relative)
 			// If ProjectDir is ".agents/skills", we keep relative.

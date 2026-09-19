@@ -1,6 +1,7 @@
 # CLI Reference
 
 Source: whitepaper §10. Help text is normative; flags mirror upstream (`-g/-a/-s/-y/--copy`) plus `mskill`-only additions (`--topic`, `--official`, `--show`, `--file`, `cache`, `trust`).
+Product vision: **Anki-import skill manager** — `mskill get master8848/Anki-import --skill anki-import-cli --project` is the canonical example; every command follows Resolve → Cache → Link with sparse git, fail-closed security, and human-gated trust. First time? `mskill search anki --limit 5 --header`.
 
 ```
 mskill [command] [args] [flags]
@@ -55,6 +56,8 @@ Flags:
   -h, --help                help
 
 Examples:
+  mskill get master8848/Anki-import --skill anki-import-cli --project
+  mskill get master8848/Anki-import/ --project --yes
   mskill get vercel-labs/agent-skills/vercel-optimize
   mskill get owner/repo --skill s1 --skill s2 --agent claude-code --global --copy
   mskill get owner/repo/skill --show
@@ -138,10 +141,12 @@ Usage:
 Flags:
   -g, --global      only global installs
   -a, --agent <name> filter by agent
+      --header      print TSV header
   -h, --help        help
 
 Examples:
   mskill list
+  mskill list --header | column -t -s $'\t'
   mskill list --global --agent claude
 ```
 

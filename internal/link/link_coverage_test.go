@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/spf13/viper"
+	"skill.sh/mskill/internal/names"
 )
 
 func TestExpandHome(t *testing.T) {
@@ -15,16 +16,16 @@ func TestExpandHome(t *testing.T) {
 		t.Skip("no home")
 	}
 	t.Setenv("HOME", home)
-	if got := expandHome("~/foo/bar"); got != filepath.Join(home, "foo/bar") {
+	if got := names.ExpandHome("~/foo/bar"); got != filepath.Join(home, "foo/bar") {
 		t.Fatalf("expandHome ~/foo/bar got %q want %q", got, filepath.Join(home, "foo/bar"))
 	}
-	if got := expandHome("~"); got != home {
+	if got := names.ExpandHome("~"); got != home {
 		t.Fatalf("expandHome ~ got %q", got)
 	}
-	if got := expandHome("/absolute"); got != "/absolute" {
+	if got := names.ExpandHome("/absolute"); got != "/absolute" {
 		t.Fatalf("absolute should stay %q", got)
 	}
-	if got := expandHome("relative/path"); got != "relative/path" {
+	if got := names.ExpandHome("relative/path"); got != "relative/path" {
 		t.Fatalf("relative %q", got)
 	}
 }

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LaTeX: prefer [latex]...[/latex] (works without MathJax add-on). -->
+<anki deck="Examples::LaTeX">
+
+  <note type="Basic" tags="latex native">
+    <front>Quadratic formula</front>
+    <back><![CDATA[
+[latex]
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+[/latex]
+]]></back>
+  </note>
+
+  <note type="Basic" tags="latex native display">
+    <front>Derivative of x^n</front>
+    <back><![CDATA[
+[latex]\displaystyle \frac{d}{dx} x^n = n x^{n-1}[/latex]
+]]></back>
+  </note>
+
+  <note type="Basic" tags="latex html-fallback">
+    <front>What is 2<sup>3</sup> × 4?</front>
+    <back>32. HTML superscripts work without LaTeX.</back>
+  </note>
+
+  <!-- MathJax \(...\) / \[...\] need the MathJax add-on. Check: anki-import doctor -->
+  <note type="Basic" tags="latex mathjax">
+    <front><![CDATA[Solve \(x^2 - 5x + 6 = 0\).]]></front>
+    <back><![CDATA[\(x = 2\) or \(x = 3\).]]></back>
+  </note>
+
+  <note type="Cloze" tags="latex cloze">
+    <text><![CDATA[The integral \(\int_0^1 x^2 \, dx\) equals {{c1::[latex]1/3[/latex]}}.]]></text>
+  </note>
+
+</anki>

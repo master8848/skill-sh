@@ -13,9 +13,15 @@ var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
 	Short:   "List installed skills",
+	Long:    "List installed skills as TSV: name<TAB>path<TAB>agent. Use --header for a header row. Filter with --global / --agent.",
+	Example: `  mskill list
+  mskill list --header | column -t -s $'\t'
+  mskill list --global --agent claude
+  mskill list --agent project`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		globalOnly, _ := cmd.Flags().GetBool("global")
 		agentFilter, _ := cmd.Flags().GetString("agent")
+		showHeader, _ := cmd.Flags().GetBool("header")
 
 		agents := link.ResolveDestinations(agentFilter, globalOnly, false)
 		// if no filter and not globalOnly, list both global and project per agent?
@@ -65,6 +71,9 @@ var listCmd = &cobra.Command{
 			cmd.Println("no skills installed")
 			return nil
 		}
+		if showHeader {
+			cmd.Println("name\tpath\tagent")
+		}
 		for _, r := range results {
 			cmd.Println(r)
 		}
@@ -72,26 +81,9 @@ var listCmd = &cobra.Command{
 	},
 }
 
-func expandHome(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			return filepath.Join(home, p[2:])
-		}
-		return p[2:]
-	}
-	if p == "~" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			return home
-		}
-		return p
-	}
-	return p
-}
-
 func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().BoolP("global", "g", false, "only global installs")
 	listCmd.Flags().StringP("agent", "a", "", "filter by agent")
+	listCmd.Flags().Bool("header", false, "print TSV header")
 }

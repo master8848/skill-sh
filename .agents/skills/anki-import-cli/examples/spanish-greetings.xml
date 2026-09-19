@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<anki version="1">
+  <deck name="Spanish">
+    <note type="Basic">
+      <field name="Front">
+        <![CDATA[
+          <h1>Hola</h1>
+        ]]>
+      </field>
+      <field name="Back">
+        <![CDATA[
+          Hello
+        ]]>
+      </field>
+      <tag>language</tag>
+      <tag>spanish</tag>
+    </note>
+    <note type="Basic">
+      <front>Adiós</front>
+      <back>Goodbye</back>
+      <tag>greetings</tag>
+    </note>
+  </deck>
+</anki>

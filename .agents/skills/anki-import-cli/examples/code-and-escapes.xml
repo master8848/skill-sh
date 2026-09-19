@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Code blocks, entities, CDATA, and escape edge cases. -->
+<anki deck="Examples::Code">
+
+  <!-- Real HTML <pre><code>: escape < > & as entities outside CDATA. -->
+  <note type="Basic" tags="code html">
+    <front>Print Hello in Python</front>
+    <back><pre><code>print("Hello")</code></pre></back>
+  </note>
+
+  <note type="Basic" tags="code entities">
+    <front>What does this JavaScript create?</front>
+    <back><pre><code>$("&lt;a&gt;", {
+  html: "a &lt;strong&gt;link&lt;/strong&gt;",
+  href: "foo.html"
+});</code></pre></back>
+  </note>
+
+  <!-- CDATA: bare & < > become HTML-safe; backslashes pass through. -->
+  <note type="Basic" tags="escape cdata">
+    <front><![CDATA[Why is 1 < 2 && 3 > 2?]]></front>
+    <back><![CDATA[Because both comparisons are true. Q & A.]]></back>
+  </note>
+
+  <!-- Pre-escaped entities inside CDATA are kept (not double-escaped). -->
+  <note type="Basic" tags="escape entities">
+    <front>Chain rule</front>
+    <back><![CDATA[(f &deg; g)&#39;(x) = f&#39;(g(x)) &middot; g&#39;(x)]]></back>
+  </note>
+
+  <!-- Literal ]]> cannot sit inside one CDATA — split it. -->
+  <note type="Basic" tags="escape cdata-terminator">
+    <front>How do you write a CDATA closer as text?</front>
+    <back><![CDATA[Write ]]]]><![CDATA[> as adjacent CDATA sections.]]></back>
+  </note>
+
+  <!-- Real HTML tags outside CDATA; literal text inside. -->
+  <note type="Cloze" tags="code cloze">
+    <text><![CDATA[Speed of light: ]]><b><![CDATA[{{c1::299,792,458}}]]></b><![CDATA[ m/s.]]></text>
+  </note>
+
+  <note type="Basic" tags="code rust">
+    <front>Rust Option match sketch</front>
+    <back><pre><code>match opt {
+  Some(x) =&gt; x,
+  None =&gt; return,
+}</code></pre></back>
+  </note>
+
+</anki>
